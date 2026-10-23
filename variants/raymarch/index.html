@@ -1,0 +1,1685 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>눈 내리는 들판</title>
+<style>
+  :root { --glass: rgba(255,255,255,0.10); --line: rgba(255,255,255,0.28); --ink: rgba(255,255,255,0.94); --ink2: rgba(255,255,255,0.70); }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #c9d3dc; }
+  canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
+  #ui { position: fixed; top: 16px; right: 16px; width: 196px; padding: 12px 14px 12px; border-radius: 14px;
+        background: linear-gradient(160deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06));
+        border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(20,40,70,0.18), inset 0 1px 0 rgba(255,255,255,0.25);
+        -webkit-backdrop-filter: blur(14px) saturate(1.25); backdrop-filter: blur(14px) saturate(1.25);
+        color: var(--ink); font: 500 12px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+        letter-spacing: 0.01em; text-shadow: 0 1px 2px rgba(0,20,40,0.35); user-select: none; transition: opacity .6s; }
+  #ui.hidden { display: none; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 9px; }
+  .row:last-child { margin-bottom: 0; }
+  .wind { justify-content: flex-start; color: var(--ink2); font-variant-numeric: tabular-nums; }
+  .wind svg { width: 18px; height: 18px; flex: none; transition: transform .25s ease-out; }
+  .wind b { color: var(--ink); font-weight: 600; margin-left: auto; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.35); outline: none; margin: 4px 0 0; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,30,60,0.35); cursor: pointer; }
+  .col { display: block; margin: 0 0 11px; }
+  .col span { display: flex; justify-content: space-between; color: var(--ink); }
+  .col span i { font-style: normal; color: var(--ink2); font-variant-numeric: tabular-nums; }
+  button { width: 100%; padding: 7px 0; margin: 0 0 7px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.32);
+           background: rgba(255,255,255,0.14); color: var(--ink); font: inherit; text-shadow: inherit; cursor: pointer; transition: background .2s; }
+  button:hover { background: rgba(255,255,255,0.26); }
+  button:active { background: rgba(255,255,255,0.34); }
+  .toggle { cursor: pointer; margin: 2px 0 9px; }
+  .sw { position: relative; width: 30px; height: 17px; border-radius: 9px; background: rgba(255,255,255,0.25); transition: background .2s; flex: none; }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,30,60,0.3); }
+  .toggle input { display: none; }
+  .toggle input:checked + .sw { background: rgba(140,200,255,0.65); }
+  .toggle input:checked + .sw::after { transform: translateX(13px); }
+  #hint { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
+          background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+          -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+          color: rgba(255,255,255,0.95); font: 500 14px/1.2 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+          letter-spacing: 0.04em; text-shadow: 0 1px 3px rgba(0,20,40,0.4); pointer-events: none; opacity: 0; transition: opacity 1.6s ease; white-space: nowrap; }
+  #hint.on { opacity: 1; }
+  #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; color: #234; font: 15px/1.6 -apple-system, sans-serif; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div class="row wind" title="바람">
+    <svg viewBox="0 0 24 24" id="arrow"><path d="M3 12h15m-5-5 5 5-5 5" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>바람</span><b id="windv">0.0 m/s</b>
+  </div>
+  <label class="col"><span>눈의 양 <i id="amountv">50%</i></span><input type="range" id="amount" min="0" max="1" step="0.01" value="0.5"></label>
+  <button id="blizzard">폭설 일으키기</button>
+  <label class="row toggle"><span>자동 폭설</span><input type="checkbox" id="auto" checked><span class="sw"></span></label>
+  <button id="reset" style="margin-bottom:0">쌓인 눈 초기화</button>
+</div>
+<div id="hint">마우스를 움직여 바람을 일으켜 보세요</div>
+<div id="err"></div>
+
+<script>
+'use strict';
+// =====================================================================================
+//  Snow over an alpine meadow — raw WebGL2.
+//  Pipeline (static camera):
+//   1. G-buffer: a one-time, progressive (striped) iq-style raymarch of the heightfield
+//      terrain + SDF conifers + chalets. Stores distance, material, sun shadow, AO,
+//      albedo, snow-threshold and two normals. Because the camera never moves this is
+//      the ultimate temporal reuse: geometry is marched once, shading runs every frame.
+//   2. Sky/cloud pass (half res, temporally accumulated volumetric cumulus slab).
+//   3. Scene shading (full res): snow coverage, storm lighting, cloud shadows, fog, veil.
+//   4. FXAA on the scene, 5. instanced stateless snowflakes (4 depth layers, soft
+//      occlusion against the G-buffer distance), 6. bloom, 7. ACES composite + grade.
+// =====================================================================================
+
+const Q = new URLSearchParams(location.search);
+const qNum = (k, d) => { const v = Q.get(k); if (v === null || v === '') return d; const n = parseFloat(v); return isFinite(n) ? n : d; };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const SEED = Math.floor(qNum('seed', 1)) >>> 0;
+const T0 = Math.max(0, qNum('t', 0));
+const COVER_Q = Q.has('cover') ? clamp(qNum('cover', 0), 0, 1) : null;
+const STORM_Q = Q.get('storm');
+const WIND_Q = (Q.get('wind') || '').split(',').map(Number);
+const SHOW_UI = Q.get('ui') !== '0';
+const DEBUG = Q.get('debug') || '';
+const FREEZE = Q.get('freeze') === '1';   // debug: stop sim time (mouse push still runs on wall time)
+
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', { antialias: false, depth: false, stencil: false, alpha: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
+function fatal(msg) { const e = document.getElementById('err'); e.style.display = 'flex'; e.textContent = msg; throw new Error(msg); }
+if (!gl) fatal('WebGL2를 지원하지 않는 브라우저입니다.');
+const extCBF = gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float');
+if (!extCBF) fatal('부동소수점 렌더 타깃(EXT_color_buffer_float)을 지원하지 않습니다.');
+gl.getExtension('OES_texture_float_linear');
+
+// ------------------------------------------------------------------ camera & sun
+const CAM = { pos: [0, 132, 0], yaw: 0.05, pitch: -0.15, fovY: 50 * Math.PI / 180 };
+if (Q.get('cam')) { const c = Q.get('cam').split(',').map(Number); if (isFinite(c[0])) CAM.yaw = c[0]; if (isFinite(c[1])) CAM.pitch = c[1]; if (isFinite(c[2])) CAM.fovY = c[2] * Math.PI / 180; }
+const camF = [Math.sin(CAM.yaw) * Math.cos(CAM.pitch), Math.sin(CAM.pitch), Math.cos(CAM.yaw) * Math.cos(CAM.pitch)];
+const camR = (() => { const r = [camF[2], 0, -camF[0]]; const l = Math.hypot(r[0], r[2]); return [r[0] / l, 0, r[2] / l]; })();
+const camU = [camF[1] * camR[2] - camF[2] * camR[1], camF[2] * camR[0] - camF[0] * camR[2], camF[0] * camR[1] - camF[1] * camR[0]];  // F x R = up
+const TANH = Math.tan(CAM.fovY / 2);
+const SUN = (() => { const s = [-0.70, 0.47, -0.17]; const l = Math.hypot(...s); return s.map(v => v / l); })();
+
+// =====================================================================================
+//                                    GLSL
+// =====================================================================================
+const COMMON = `
+precision highp float; precision highp int; precision highp sampler2D;
+uniform vec2 uRes;
+uniform vec3 uCamPos, uCamR, uCamU, uCamF;
+uniform float uTanH;
+uniform vec3 uSunDir;
+uniform float uTime, uStorm, uCover;
+uniform vec3 uSunCol, uSkyAmb, uSkyZen, uSkyHor, uFogCol;
+uniform vec4 uFogP;      // x haze density, y haze scale height, z storm extinction, w valley-mist density
+uniform vec2 uCloudOff;
+uniform float uCloudCov;
+uniform sampler2D uNoise;
+
+vec3 camRay(vec2 frag) {
+  vec2 ndc = frag / uRes * 2.0 - 1.0;
+  return normalize(uCamF + uCamR * (ndc.x * uTanH * uRes.x / uRes.y) + uCamU * (ndc.y * uTanH));
+}
+uint hu(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+float hf(uint x) { return float(hu(x)) * (1.0 / 4294967296.0); }
+float hash2(vec2 p) { ivec2 i = ivec2(floor(p)); return hf(uint(i.x) * 0x27d4eb2du ^ hu(uint(i.y) + 0x165667b1u)); }
+float sat(float x) { return clamp(x, 0.0, 1.0); }
+float sq(float x) { return x * x; }
+
+// Texture value noise (cheap, per-frame use). Texel (x,y): G = A(x,y), R = A(x+37,y+17),
+// which turns one bilinear fetch into a 3D noise lookup (iq's trick).
+float tnoise(vec2 x) { vec2 p = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return textureLod(uNoise, (p + f + 0.5) / 256.0, 0.0).g; }
+float tnoise3(vec3 x) {
+  vec3 p = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  vec2 uv = p.xy + vec2(37.0, 17.0) * p.z + f.xy;
+  vec2 rg = textureLod(uNoise, (uv + 0.5) / 256.0, 0.0).gr;
+  return mix(rg.x, rg.y, f.z);
+}
+
+// Sky radiance (analytic): Rayleigh-ish zenith/horizon gradient + Mie halo around the sun.
+vec3 skyColor(vec3 rd) {
+  float mu = dot(rd, uSunDir);
+  float y = clamp(rd.y, 0.0, 1.0);
+  vec3 c = mix(uSkyHor, uSkyZen, pow(y + 0.015, 0.5));
+  c = mix(c, uSkyHor * 1.08, exp(-max(rd.y, 0.0) * 40.0) * 0.6);         // pale band at the horizon
+  float s = max(mu, 0.0);
+  c += uSunCol * (0.018 * pow(s, 3.0) + 0.05 * pow(s, 24.0) + 0.9 * pow(s, 1200.0));
+  return c;
+}
+
+// Large-scale cloud placement ("weather map"), shared by clouds and their ground shadows.
+float weather(vec2 q) { return tnoise(q * 0.00016 + vec2(3.1, 7.7)) * 0.62 + tnoise(q * 0.00047 + vec2(9.0, 1.3)) * 0.38; }
+float cloudShadow(vec3 p) {
+  vec2 q = p.xz + uSunDir.xz / uSunDir.y * (3600.0 - p.y) + uCloudOff;
+  float w = weather(q);
+  float shape = sat((w - (1.0 - uCloudCov)) / max(uCloudCov, 0.05));
+  return 1.0 - 0.45 * smoothstep(0.0, 0.6, shape) * (1.0 - 0.7 * uStorm);
+}
+
+// Aerial perspective: analytic integral of an exponential-height haze, a shallow dense
+// valley-mist layer and a uniform storm whiteout. Returns inscatter (rgb) and transmittance (a).
+vec4 fogAtM(float t, vec3 rd, float mistMod) {
+  float y0 = uCamPos.y;
+  float ry = abs(rd.y) < 1e-4 ? 1e-4 : rd.y;
+  float k = 1.0 / uFogP.y;
+  float odH = uFogP.x * exp(-y0 * k) * (1.0 - exp(clamp(-ry * t * k, -30.0, 30.0))) / (ry * k);
+  float km = 1.0 / 260.0;
+  float odM = uFogP.w * exp(-(y0 + 650.0) * km) * (1.0 - exp(clamp(-ry * t * km, -30.0, 30.0))) / (ry * km);
+  float odS = uFogP.z * t;
+  odH = max(odH, 0.0); odM = max(odM, 0.0) * mistMod;
+  float od = odH + odM + odS;
+  float T = exp(-od);
+  float mu = max(dot(rd, uSunDir), 0.0);
+  vec3 cH = uFogCol + uSunCol * (0.03 * pow(mu, 6.0));
+  vec3 cM = mix(uFogCol, vec3(dot(uFogCol, vec3(0.33))), 0.35) * 1.12 + uSunCol * 0.02;
+  vec3 cS = uFogCol;
+  vec3 c = (cH * odH + cM * odM + cS * odS) / max(od, 1e-6);
+  return vec4(c * (1.0 - T), T);
+}
+vec4 fogAt(float t, vec3 rd) { return fogAtM(t, rd, 1.0); }
+// drifting valley mist banks: density modulation sampled where the ray dips lowest
+float mistBanks(vec3 rd, float t) {
+  float tl = rd.y < 0.0 ? min(t, (uCamPos.y + 650.0) / -rd.y) : min(t, 3000.0);
+  vec3 p = uCamPos + rd * tl;
+  vec2 q = p.xz * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015) + uCloudOff * 0.00002;
+  float n = tnoise(q) * 0.65 + tnoise(q * 2.3 + 4.1) * 0.35;
+  return 0.25 + 1.9 * smoothstep(0.35, 0.8, n);
+}
+vec2 octEnc(vec3 n) {
+  vec3 v = n / (abs(n.x) + abs(n.y) + abs(n.z));
+  vec2 e = v.xz;
+  if (v.y < 0.0) e = (1.0 - abs(e.yx)) * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+  return e;
+}
+vec3 octDec(vec2 e) {
+  vec3 v = vec3(e.x, 1.0 - abs(e.x) - abs(e.y), e.y);
+  float t = max(-v.y, 0.0);
+  v.x += v.x >= 0.0 ? -t : t; v.z += v.z >= 0.0 ? -t : t;
+  return normalize(v);
+}
+`;
+
+const VS_FULL = `#version 300 es
+void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+
+// ------------------------------------------------------------------ G-buffer raymarch
+const FS_GBUF = `#version 300 es
+${COMMON}
+uniform float uPixAng;
+layout(location = 0) out vec4 o0;   // t, material(+grass frac), sun shadow, AO
+layout(location = 1) out vec4 o1;   // albedo, snow threshold
+layout(location = 2) out vec4 o2;   // oct(detail normal), oct(smooth normal)
+
+const mat2 M2 = mat2(0.8, 0.6, -0.6, 0.8);
+const float TMAX = 42000.0;
+const float HMAX = 4400.0;
+
+// value noise in [-1,1] (quintic) and with analytic derivatives
+float vn(vec2 x) {
+  vec2 i = floor(x), f = x - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  float a = hash2(i), b = hash2(i + vec2(1, 0)), c = hash2(i + vec2(0, 1)), d = hash2(i + vec2(1, 1));
+  return -1.0 + 2.0 * (a + (b - a) * u.x + (c - a) * u.y + (a - b - c + d) * u.x * u.y);
+}
+vec3 vnd(vec2 x) {
+  vec2 i = floor(x), f = x - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  float a = hash2(i), b = hash2(i + vec2(1, 0)), c = hash2(i + vec2(0, 1)), d = hash2(i + vec2(1, 1));
+  float k1 = b - a, k2 = c - a, k4 = a - b - c + d;
+  return vec3(-1.0 + 2.0 * (a + k1 * u.x + k2 * u.y + k4 * u.x * u.y), 2.0 * du * vec2(k1 + k4 * u.y, k2 + k4 * u.x));
+}
+// 3D value noise (for rock detail on steep faces, where heightfield noise would be stretched)
+float hash3(vec3 p) { ivec3 i = ivec3(floor(p)); return hf(uint(i.x) * 0x27d4eb2du ^ hu(uint(i.y) * 0x165667b1u ^ hu(uint(i.z) + 0x9e3779b9u))); }
+float vn3(vec3 x) {
+  vec3 i = floor(x), f = x - i;
+  vec3 u = f * f * (3.0 - 2.0 * f);
+  float a = mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), u.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), u.x), u.y);
+  float b = mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), u.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), u.x), u.y);
+  return mix(a, b, u.z) * 2.0 - 1.0;
+}
+float fbm3(vec3 p, float oct) {
+  float a = 0.0, b = 0.5;
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    a += b * vn3(p) * clamp(oct - fi, 0.0, 1.0);
+    b *= 0.5; p = p * 2.03 + vec3(1.7, -3.1, 2.3);
+  }
+  return a;
+}
+// 3D bump: perturb the normal by the surface-projected gradient of a 3D fbm (ridged-ish rock)
+vec3 rockBump(vec3 p, vec3 n, float fp, float amp) {
+  float sc = 70.0;
+  float oct = clamp(log2(sc / max(1.5 * fp, 0.2)), 0.0, 7.0);
+  float e = max(fp * 0.7, 0.3);
+  vec3 q = p / sc;
+  float c = abs(fbm3(q, oct));
+  vec3 g = vec3(abs(fbm3(q + vec3(e / sc, 0, 0), oct)) - c, abs(fbm3(q + vec3(0, e / sc, 0), oct)) - c, abs(fbm3(q + vec3(0, 0, e / sc), oct)) - c) / e;
+  g -= dot(g, n) * n;
+  return normalize(n - amp * sc * g);
+}
+
+// fbm with a fractional octave count (smooth LOD by pixel footprint -> no seams)
+float fbmF(vec2 p, float oct) {
+  float a = 0.0, b = 0.5;
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    a += b * vn(p) * clamp(oct - fi, 0.0, 1.0);
+    b *= 0.5; p = M2 * p * 2.03 + 1.7;
+  }
+  return a;
+}
+// iq "erosion" fbm: each octave is damped by the accumulated slope, n/(1+|grad|^2),
+// so detail collects in gullies and ridges stay sharp -> eroded mountain look.
+float erodedFbm(vec2 p, float oct) {
+  float a = 0.0, b = 0.5; vec2 d = vec2(0.0);
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    float w = clamp(oct - fi, 0.0, 1.0);
+    vec3 n = vnd(p);
+    d += n.yz * w;
+    a += b * w * n.x / (1.0 + dot(d, d));
+    b *= 0.5; p = M2 * p * 2.0;
+  }
+  return a;
+}
+// ridged multifractal (sharp crests), weights feed back between octaves
+float ridgedFbm(vec2 p, float oct) {
+  float a = 0.0, b = 0.5, w = 1.0;
+  for (int i = 0; i < 10; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    float f = clamp(oct - fi, 0.0, 1.0);
+    float n = 1.0 - abs(vn(p)); n *= n;
+    a += b * n * w * f;
+    w = clamp(n * 1.7, 0.0, 1.0);
+    b *= 0.5; p = M2 * p * 2.07 + 11.7;
+  }
+  return a;
+}
+float softplus(float x, float k) { return k * log(1.0 + exp(clamp(x / k, -40.0, 40.0))); }
+
+// winding dirt path through the meadow
+float pathX(float z) { return 30.0 + 62.0 * sin(z * 0.0047 + 0.6) + 24.0 * sin(z * 0.0131 + 2.2) - 0.055 * z; }
+float valleyAxis(float z) { return -1750.0 - 0.17 * z + 260.0 * sin(z * 0.00041 + 0.4); }
+
+// macro weights used by both height and material
+void layoutW(vec2 w, out float mtnW, out float valW) {
+  float x = w.x, z = w.y;
+  float zw = 7800.0 - 0.45 * x;                                   // the great wall, closer on the right
+  float wall = smoothstep(zw - 1100.0, zw + 500.0, z) * smoothstep(-5200.0, -1500.0, x + 0.3 * (z - 7000.0));
+  vec2 lp = (w - vec2(-6000.0, 16500.0)) / vec2(3600.0, 2800.0);  // left snowy massif
+  float left = exp(-dot(lp, lp) * 1.2);
+  float back = smoothstep(15000.0, 21000.0, z) * 0.9;              // distant range closing the valley
+  mtnW = clamp(max(wall, max(left, back)), 0.0, 1.0);
+  float dv = (x - valleyAxis(z)) / 1450.0;
+  valW = exp(-dv * dv) * smoothstep(400.0, 2600.0, z - 0.3 * (x + 1700.0)) * (1.0 - mtnW * 0.85);
+}
+
+float terrainH(vec2 p, float fp) {
+  // gentle domain warp keeps the macro shapes organic
+  vec2 w = p + 340.0 * vec2(vn(p * 0.00033 + vec2(4.1, 0.3)), vn(p * 0.00033 + vec2(-2.3, 6.1)));
+  float x = w.x, z = w.y;
+  float mtnW, valW; layoutW(w, mtnW, valW);
+
+  // --- meadow plateau: shelf under the viewpoint, basin below it, flank rising to the right
+  float h = -95.0 * smoothstep(-100.0, 950.0, z);
+  h += 0.12 * softplus(z - 2200.0, 500.0) * smoothstep(-1500.0, 900.0, x) * (1.0 - mtnW);
+  h += 0.04 * softplus(x - 600.0, 300.0) * smoothstep(300.0, 1800.0, z);
+  // --- valley trough on the left
+  h -= 1000.0 * valW;
+  // --- mountains
+  if (mtnW > 0.002) {
+    float oct = clamp(log2(2800.0 / max(2.2 * fp, 0.5)), 1.0, 11.0);
+    vec2 q = w / 2800.0;
+    float e = erodedFbm(q + vec2(3.1, 1.7), oct);
+    float r = ridgedFbm(q * 1.25 + vec2(-4.2, 9.1), oct - 1.0);
+    float m = 1700.0 + 1300.0 * e + 1100.0 * r;
+    vec2 lp2 = (w - vec2(-6300.0, 16800.0)) / vec2(2400.0, 2000.0);
+    m += 1100.0 * exp(-dot(lp2, lp2));                              // the left massif towers higher
+    // couloirs & buttresses: ridged noise stretched along the fall line (z), narrow across (x)
+    float oc = clamp(log2(260.0 / max(2.2 * fp, 0.5)), 0.0, 6.0);
+    float cg = ridgedFbm(vec2(w.x / 210.0, w.y / 520.0) + vec2(1.3, 7.1), oc);
+    m += (cg - 0.35) * 300.0 * smoothstep(900.0, 2200.0, m);
+    // mid-scale eroded rock: ribs, ledges and buttress faces
+    float oe = clamp(log2(420.0 / max(2.2 * fp, 0.5)), 0.0, 6.0);
+    m += 140.0 * erodedFbm(w / 420.0 + vec2(5.5, 3.3), oe) * smoothstep(1000.0, 2000.0, m);
+    // strata: soft, slightly tilted and wavy terraces on the rock faces (ledges that catch snow)
+    // irregular limestone ledges: spacing and strength vary, and they only appear in patches
+    float tz = (m + 0.05 * w.x + 130.0 * vn(w * 0.0007)) / 95.0; float tf = fract(tz);
+    float ledgeMask = smoothstep(-0.1, 0.5, vn(w * 0.0011 + 4.4)) * smoothstep(1300.0, 1900.0, m);
+    m += (smoothstep(0.3, 0.7, tf) - tf) * 95.0 * 0.32 * ledgeMask;
+    h = mix(h, h + m, mtnW);
+  }
+  // --- rolling meadow detail (fades out on mountains), down to ~1 m bumps near the camera
+  float octM = clamp(log2(800.0 / max(2.0 * fp, 0.03)), 0.0, 11.0);
+  h += 42.0 * fbmF(w / 800.0 + 2.3, octM) * (1.0 - 0.7 * mtnW);
+  // eroded gullies on the mid-distance grassy slopes
+  float octE = clamp(log2(900.0 / max(2.2 * fp, 0.3)), 0.0, 7.0);
+  h += 70.0 * erodedFbm(w / 900.0 + vec2(8.3, 2.1), octE) * smoothstep(1300.0, 3200.0, z) * (1.0 - mtnW);
+  float octB = clamp(log2(18.0 / max(2.0 * fp, 0.03)), 0.0, 5.0);
+  h += 1.6 * fbmF(p / 18.0 + 7.7, octB) * (1.0 - mtnW);
+  float octU = clamp(log2(75.0 / max(2.0 * fp, 0.03)), 0.0, 3.0);
+  h += 5.0 * fbmF(p / 75.0 + 3.1, octU) * (1.0 - mtnW);
+  // path is slightly sunken into the turf
+  float pd = abs(p.x - pathX(p.y));
+  h -= 0.35 * (1.0 - smoothstep(1.2, 2.6, pd)) * step(p.y, 2600.0);
+  return h;
+}
+
+// ------------------------------------------------------------ conifers (SDF on a jittered grid)
+// chalets: x, z, rotation
+const vec3 CH[7] = vec3[7](vec3(98.0, 335.0, 0.4), vec3(88.0, 488.0, -0.3), vec3(-4.0, 612.0, 0.9), vec3(-112.0, 690.0, 0.2),
+                           vec3(-28.0, 765.0, -0.5), vec3(-125.0, 872.0, 1.1), vec3(22.0, 905.0, 0.3));
+const float TC = 11.0;
+float forestDensity(vec2 c, float h) {
+  float n = vn(c * 0.0019 + vec2(5.2, 1.3)) * 0.6 + vn(c * 0.0061 + 3.3) * 0.3 + vn(c * 0.019) * 0.1;
+  // the dark forest band in the middle distance
+  float band = exp(-sq((c.y - 1650.0 - 0.18 * c.x - 140.0 * sin(c.x * 0.0023)) / 230.0));
+  float d = smoothstep(0.2, 0.42, n) * 0.92 + 0.95 * band * smoothstep(-0.35, -0.05, n);
+  d = max(d, 0.004 + 0.07 * smoothstep(-0.05, 0.3, n) * smoothstep(0.35, 0.6, vn(c * 0.011 + 2.0) * 0.5 + 0.5));  // scattered groups
+  d *= smoothstep(5.0, 14.0, abs(c.x - pathX(c.y)));              // keep the path clear
+  d *= smoothstep(780.0, 520.0, h);                               // treeline
+  float dc = 1e5;
+  for (int i = 0; i < 7; i++) dc = min(dc, length(c - CH[i].xy));
+  d *= smoothstep(14.0, 38.0, dc);                                 // clearings around the chalets
+  return clamp(d, 0.0, 0.93);
+}
+float sdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+
+// returns tree distance; hf = height fraction inside the tree, tid = per-tree random
+float treesSDF(vec3 p, float hb, out float hfr, out float tid) {
+  vec2 g = p.xz / TC;
+  vec2 cell = floor(g);
+  vec2 o = step(0.5, g - cell) - 1.0;           // 2x2 neighbourhood toward p's quadrant
+  float best = 1e5; hfr = 0.0; tid = 0.0;
+  for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+    vec2 c = cell + o + vec2(float(i), float(j));
+    float r0 = hash2(c * 1.0 + 0.5), r1 = hash2(c + 71.3), r2 = hash2(c + 13.9), r3 = hash2(c - 41.7);
+    float dens = forestDensity((c + 0.5) * TC, hb);
+    if (r0 > dens) continue;
+    vec2 tp = (c + 0.5 + (vec2(r1, r2) - 0.5) * 0.42) * TC;
+    float H = mix(11.0, 26.0, r3) * mix(0.82, 1.12, dens);
+    float R = H * (0.25 + 0.07 * fract(r3 * 13.7));
+    vec3 q = vec3(p.x - tp.x, p.y - hb, p.z - tp.y);
+    float y = q.y / H;
+    float rr = length(q.xz);
+    // whorled branch tiers: smooth sawtooth -> each tier widest at its base (snow shelves on top)
+    float tiers = 6.0 + 4.0 * r1;
+    float ty = fract(y * tiers + r2);
+    float saw = min(ty * 6.0, 1.0) * (1.0 - ty);
+    float ang = atan(q.z, q.x);
+    float br = 0.09 * sin(ang * 7.0 + r0 * 40.0 + y * 11.0) + 0.05 * sin(ang * 13.0 - y * 23.0);
+    float rad = R * (1.0 - y) * (0.55 + 0.45 * saw + br);
+    float d = (rr - max(rad, 0.0)) * 0.62;
+    d = max(d, 0.15 * H - q.y);
+    d = max(d, q.y - H);
+    float trunk = max(rr - 0.06 * H * (1.0 - y), max(q.y - 0.3 * H, -q.y - 2.0));
+    d = min(d, trunk);
+    if (d < best) { best = d; hfr = clamp(y, 0.0, 1.0); tid = r3; }
+  }
+  return best;
+}
+float chaletsSDF(vec3 p, float hb, out float m) {
+  float best = 1e5; m = 3.0;
+  for (int i = 0; i < 7; i++) {
+    vec3 c = CH[i];
+    vec2 dxz = p.xz - c.xy;
+    if (dot(dxz, dxz) > 1300.0) continue;
+    float cs = cos(c.z), sn = sin(c.z);
+    vec3 q = vec3(cs * dxz.x - sn * dxz.y, p.y - hb, sn * dxz.x + cs * dxz.y);
+    float sc = (i == 0 || i == 4) ? 1.0 : 1.25;
+    q /= sc;
+    float walls = sdBox(q - vec3(0.0, 1.0, 0.0), vec3(4.6, 3.0, 3.1));
+    // pitched roof: thin slab following |z|*tan(28deg), with overhang
+    float ry = 4.7 - abs(q.z) * 0.53;
+    float roof = max(abs(q.y - ry) * 0.88 - 0.22, max(abs(q.x) - 5.3, abs(q.z) - 3.8));
+    float d = min(walls, roof) * sc;
+    if (d < best) { best = d; m = roof < walls ? 4.0 : 3.0; }
+  }
+  return best;
+}
+float nearChalets(vec2 p) {
+  return (p.y > 300.0 && p.y < 935.0 && p.x > -150.0 && p.x < 125.0) ? 1.0 : 0.0;
+}
+
+// full scene distance. mat: 1 terrain, 2 tree, 3 wall, 4 roof
+float mapScene(vec3 p, float fp, out float mat, out float hb) {
+  hb = terrainH(p.xz, fp);
+  float dy = p.y - hb;
+  float d = dy * 0.42;
+  mat = 1.0;
+  if (fp < 2.8) {
+    if (dy < 30.0) { float hf_, tid_; float dt = treesSDF(p, hb, hf_, tid_); if (dt < d) { d = dt; mat = 2.0; } }
+    else d = min(d, dy - 29.5);
+  }
+  if (nearChalets(p.xz) > 0.5 && dy < 12.0) { float cm; float dc = chaletsSDF(p, hb, cm); if (dc < d) { d = dc; mat = cm; } }
+  return d;
+}
+
+float softShadow(vec3 ro, vec3 rd, float fp0, bool trees) {
+  float res = 1.0, t = 0.4;
+  for (int i = 0; i < 110; i++) {
+    vec3 p = ro + rd * t;
+    if (p.y > HMAX) break;
+    float fp = max(fp0, t * 0.004);
+    float hb = terrainH(p.xz, fp);
+    float d = p.y - hb;
+    if (trees && fp0 < 2.8 && t < 450.0 && d < 30.0) { float a, b; d = min(d, treesSDF(p, hb, a, b)); }
+    res = min(res, 10.0 * d / t);
+    if (res < 0.002) break;
+    t += clamp(d * 0.55, 0.25 + t * 0.012, 60.0 + t * 0.06);
+    if (t > 22000.0) break;
+  }
+  return smoothstep(0.0, 1.0, clamp(res, 0.0, 1.0));
+}
+
+vec3 terrainNormal(vec2 p, float fp, float e) {
+  float hx = terrainH(p + vec2(e, 0.0), fp) - terrainH(p - vec2(e, 0.0), fp);
+  float hz = terrainH(p + vec2(0.0, e), fp) - terrainH(p - vec2(0.0, e), fp);
+  return normalize(vec3(-hx, 2.0 * e, -hz));
+}
+
+void main() {
+  vec3 rd = camRay(gl_FragCoord.xy);
+  vec3 ro = uCamPos;
+  float t = 2.0, mat = 0.0, hb = 0.0;
+  float tPrev = t;
+  bool hit = false;
+  for (int i = 0; i < 900; i++) {
+    vec3 p = ro + rd * t;
+    float fp = t * uPixAng;
+    float m;
+    float d = mapScene(p, fp, m, hb);
+    if (d < max(0.35 * fp, 0.004)) { hit = true; mat = m; break; }
+    if ((p.y > HMAX && rd.y > 0.0) || t > TMAX) break;
+    tPrev = t;
+    t += max(d, 0.25 * fp);
+  }
+  if (!hit) { o0 = vec4(65000.0, 0.0, 1.0, 1.0); o1 = vec4(0.0); o2 = vec4(0.0); return; }
+  // bisection refine for the heightfield (steep cliffs)
+  if (mat == 1.0) {
+    float a = tPrev, b = t;
+    for (int k = 0; k < 6; k++) { float mt = 0.5 * (a + b); vec3 p = ro + rd * mt; if (p.y - terrainH(p.xz, mt * uPixAng) < 0.0) b = mt; else a = mt; }
+    t = b;
+  }
+  vec3 pos = ro + rd * t;
+  float fp = t * uPixAng;
+  float hT = terrainH(pos.xz, fp);
+  vec3 nD, nS;
+  float hfr = 0.0, tid = 0.0;
+  if (mat == 1.0) {
+    nD = terrainNormal(pos.xz, fp * 0.45, max(0.05, fp * 0.6));
+    nS = terrainNormal(pos.xz, fp * 5.0, max(1.5, fp * 5.0));
+  } else {
+    float e = max(0.03, fp * 0.5);
+    float m_, h_;
+    vec2 k = vec2(1.0, -1.0);
+    // tetrahedral gradient of the scene SDF
+    nD = normalize(k.xyy * mapScene(pos + k.xyy * e, fp, m_, h_) + k.yyx * mapScene(pos + k.yyx * e, fp, m_, h_) +
+                   k.yxy * mapScene(pos + k.yxy * e, fp, m_, h_) + k.xxx * mapScene(pos + k.xxx * e, fp, m_, h_));
+    nS = nD;
+    if (mat == 2.0) { treesSDF(pos, hT, hfr, tid); }
+  }
+  // ---- sun shadow
+  float sh = dot(nD, uSunDir) > -0.2 ? softShadow(pos + nD * max(0.15, fp * 2.0), uSunDir, fp, true) : 0.0;
+  // ---- ambient occlusion: heightfield horizon probes along the normal
+  float ao = 1.0;
+  {
+    float s = max(1.5, fp * 2.0);
+    float occ = 0.0, wsum = 0.0;
+    for (int k = 0; k < 5; k++) {
+      float hh = s * pow(3.0, float(k));
+      vec3 q = pos + nS * hh;
+      float dd = q.y - terrainH(q.xz, max(fp, hh * 0.2));
+      occ += clamp((hh - dd) / hh, 0.0, 1.0) * (1.0 / float(k + 1)); wsum += 1.0 / float(k + 1);
+    }
+    ao = clamp(1.0 - 1.5 * occ / wsum, 0.0, 1.0);
+  }
+  // ---- materials
+  vec3 alb; float snowT; float grass = 0.0;
+  vec2 xz = pos.xz;
+  if (mat == 1.0) {
+    vec2 w = xz + 340.0 * vec2(vn(xz * 0.00033 + vec2(4.1, 0.3)), vn(xz * 0.00033 + vec2(-2.3, 6.1)));
+    float mtnW, valW; layoutW(w, mtnW, valW);
+    float steep = 1.0 - smoothstep(0.42, 0.86, nS.y);
+    float alt = pos.y;
+    float lodD = clamp(log2(60.0 / max(fp, 0.01)), 0.0, 6.0);  // fade fine albedo octaves with distance
+    // grass: lush yellow-green with dry / dark patches
+    float n1 = vn(xz * 0.0027 + 1.7), n2 = vn(xz * 0.011 + 4.2), n3 = fbmF(xz * 0.09, lodD);
+    vec3 gA = vec3(0.165, 0.20, 0.034), gB = vec3(0.25, 0.245, 0.05), gC = vec3(0.075, 0.105, 0.026);
+    vec3 grassC = mix(gA, gB, smoothstep(-0.2, 0.6, n1));
+    grassC = mix(grassC, gC, 0.55 * smoothstep(0.15, 0.75, n2));
+    float n4 = vn(xz * 0.045 + 2.9);
+    grassC = mix(grassC, grassC * vec3(0.72, 0.8, 0.7), 0.5 * smoothstep(0.2, 0.8, n4));    // darker lush hollows
+    grassC = mix(grassC, vec3(0.25, 0.22, 0.07), 0.25 * smoothstep(0.55, 0.95, vn(xz * 0.03 + 9.1)));  // straw patches
+    grassC *= 0.82 + 0.36 * n3;
+    grassC = mix(grassC, grassC * vec3(1.15, 1.05, 0.8), smoothstep(0.1, 0.4, steep));   // drier on slopes
+    grassC = mix(grassC, grassC * vec3(0.7, 0.74, 0.7), 0.7 * mtnW);                    // muted alpine turf / scree
+    // rock: grey-blue limestone, strata bands, darker streaks
+    float strat = vn(vec2(alt * 0.011 + 0.5 * vn(xz * 0.0015), xz.x * 0.0013 - xz.y * 0.0004)) * 0.6 + vn(xz * 0.006 + alt * 0.003) * 0.4;
+    float stk = vn(xz * 0.012 + alt * 0.003);
+    vec3 rockC = vec3(0.155, 0.16, 0.172) * (0.75 + 0.3 * strat) * (0.8 + 0.3 * stk);
+    rockC = mix(rockC, vec3(0.16, 0.14, 0.11), 0.3 * smoothstep(0.2, 0.8, vn(xz * 0.004)));
+    float lodR = clamp(log2(30.0 / max(fp, 0.01)), 0.0, 4.0);
+    float streaks = fbmF(vec2(xz.x * 0.05, alt * 0.012 + xz.y * 0.01), lodR);             // water-stain streaks down the faces
+    rockC *= 0.9 + 0.18 * smoothstep(-0.5, 0.6, streaks);
+    rockC = mix(rockC, rockC * vec3(0.9, 1.0, 0.85), 0.35 * smoothstep(0.0, 0.6, vn(xz * 0.013)));  // lichen tint
+    float rockW = clamp(steep * 1.6 - 0.15, 0.0, 1.0);
+    rockW = max(rockW, smoothstep(1150.0, 1900.0, alt + 350.0 * vn(xz * 0.0021)) * mix(0.6, 1.0, steep));
+    rockW *= smoothstep(0.0, 0.25, mtnW + valW * 0.8 + steep * 0.5);
+    // rock albedo from 3D noise as well (no vertical stretching on cliffs)
+    float r3 = fbm3(pos / 45.0, clamp(log2(45.0 / max(1.5 * fp, 0.2)), 0.0, 6.0));
+    rockC *= 0.78 + 0.5 * r3;
+    alb = mix(grassC, rockC, rockW);
+    nD = normalize(mix(nD, rockBump(pos, nD, fp, 0.7), rockW * smoothstep(0.1, 0.5, steep)));
+    // distant forest (beyond the tree-SDF range): dark mottled canopy colour
+    float fcov = 0.0;
+    if (fp >= 2.2) {
+      float fd = forestDensity(xz, alt) * (1.0 - rockW);
+      float fn = 0.5 + 0.5 * vn(xz * 0.08);
+      float fn2 = 0.5 + 0.5 * vn(xz * 0.35);                                    // individual crowns as speckle
+      float cov = smoothstep(0.3, 0.75, fd + 0.3 * (fn - 0.5)) * smoothstep(2.2, 2.8, fp);
+      alb = mix(alb, vec3(0.03, 0.05, 0.026) * (0.55 + 0.9 * fn2), cov * 0.85);
+      ao *= 1.0 - 0.35 * cov;
+      fcov = cov;
+    }
+    // path
+    float pd = abs(xz.x - pathX(xz.y));
+    float pm = (1.0 - smoothstep(1.5, 2.6 + fp * 0.4, pd)) * step(xz.y, 2600.0) * (1.0 - mtnW);
+    alb = mix(alb, vec3(0.33, 0.29, 0.22) * (0.85 + 0.2 * n3), pm);
+    grass = (1.0 - rockW) * (1.0 - pm) * (1.0 - fcov);
+    // ---- snow threshold: flat, high, lee-side areas get snow first; steep cliffs stay rocky
+    float altF = smoothstep(1150.0, 2300.0, alt + 280.0 * vn(xz * 0.0031));
+    float drift = vn(vec2(xz.x * 0.0022 + xz.y * 0.0011, xz.y * 0.0065));   // wind-elongated drifts
+    float patchN = vn(xz * 0.006 + 8.1) * 0.6 + vn(xz * 0.025) * 0.4;
+    float tuft = fbmF(xz * 0.7, clamp(log2(1.4 / max(fp, 0.01)), 0.0, 3.0)) * 0.6 + vn(xz * 0.09 + 3.3) * 0.4;  // grass tufts poke through
+    float ledge = smoothstep(0.55, 0.92, nD.y);
+    float gentle = 1.0 - smoothstep(0.78, 0.99, nS.y);
+    // flat meadow thresholds are spread over ~0.16..0.81 so cover grows patch by patch
+    snowT = 0.08 + 0.55 * smoothstep(-0.6, 0.6, patchN) + 0.12 * (0.5 + 0.5 * drift) + 0.14 * (0.5 + 0.5 * tuft) * grass
+          + 0.12 * gentle + 0.1 * pm + steep * (0.45 + 1.0 * rockW) - 0.55 * ledge * steep * rockW - 0.95 * altF * (1.0 - 0.55 * steep);
+    snowT -= 0.75 * smoothstep(2500.0, 3500.0, alt + 200.0 * drift) * (1.0 - 0.45 * steep);
+    snowT -= 0.9 * smoothstep(1900.0, 2600.0, alt) * ledge * rockW;          // old snow lying on high ledges
+    snowT = max(snowT, mix(0.09, -1.0, altF));
+  } else if (mat == 2.0) {
+    // conifer needles: dark green, per-tree hue variation, darker inside / at the bottom
+    vec3 tc = mix(vec3(0.020, 0.045, 0.022), vec3(0.035, 0.055, 0.025), tid);
+    tc = mix(tc, vec3(0.025, 0.045, 0.04), step(0.75, fract(tid * 7.3)));
+    alb = tc * (0.75 + 0.5 * hash2(floor(pos.xz * 3.0) + floor(pos.y * 3.0)));
+    ao *= mix(0.35, 1.0, sqrt(hfr));
+    float up = smoothstep(0.05, 0.8, nD.y);
+    snowT = 0.36 + 1.8 * (1.0 - up) + 0.16 * vn(pos.xz * 1.7 + pos.y) + 0.14 * (1.0 - hfr);
+  } else if (mat == 3.0) {
+    alb = vec3(0.13, 0.075, 0.04) * (0.8 + 0.3 * vn(vec2(pos.y * 4.0, pos.x + pos.z)));
+    snowT = 3.0;
+  } else {
+    alb = vec3(0.14, 0.13, 0.12) * (0.85 + 0.3 * hash2(floor(pos.xz * 1.3)));
+    snowT = 0.02 + 0.5 * (1.0 - nD.y);
+  }
+  // ground darkening under / near trees (needle litter + occlusion)
+  if (mat == 1.0 && fp < 2.8) {
+    float a_, b_;
+    float dt = treesSDF(pos + vec3(0.0, 1.5, 0.0), hT, a_, b_);
+    ao *= mix(0.45, 1.0, smoothstep(-0.5, 4.5, dt));
+  }
+  o0 = vec4(t, mat + (mat == 2.0 ? hfr : grass) * 0.9, sh, ao);
+  o1 = vec4(alb, snowT);
+  o2 = vec4(octEnc(nD), octEnc(nS));
+}
+`;
+
+// ------------------------------------------------------------------ sky + clouds (half res, temporal)
+const FS_SKY = `#version 300 es
+${COMMON}
+uniform sampler2D uPrev;
+uniform float uBlend, uFrame, uSteps;
+out vec4 o;
+const float CB = 2500.0, CT = 5200.0;
+float cloudD(vec3 p, bool hi) {
+  vec2 q = p.xz + uCloudOff;
+  float wm = weather(q);
+  float cov = uCloudCov;
+  float shape = sat((wm - (1.0 - cov)) / max(cov, 0.05));          // 0..1 inside cloud fields
+  float h = (p.y - CB) / (CT - CB);
+  float top = 0.18 + 0.82 * sqrt(shape);                            // taller towers in the cores
+  float prof = smoothstep(0.0, 0.04, h) * smoothstep(top, top * 0.3, h);
+  vec3 r = vec3(q.x, p.y * 1.2, q.y) * 0.0011;
+  // billowy detail: |2n-1| octaves give rounded cauliflower bulges with creases between them
+  float n = tnoise3(r) * 0.5 + abs(tnoise3(r * 2.1 + 3.7) * 2.0 - 1.0) * 0.28;
+  n += hi ? abs(tnoise3(r * 4.4 + 1.1) * 2.0 - 1.0) * 0.14 + abs(tnoise3(r * 9.3 + 5.3) * 2.0 - 1.0) * 0.08 : 0.11;
+  float d = shape * prof * (1.0 + 0.6 * uStorm) - (1.0 - n) * 0.58 + 0.06;
+  return sat(d * 4.5);
+}
+void main() {
+  vec3 rd = camRay(gl_FragCoord.xy);
+  vec3 col = skyColor(rd);
+  vec3 sky0 = col;
+  if (rd.y > 0.005) {
+    float t0 = (CB - uCamPos.y) / rd.y, t1 = (CT - uCamPos.y) / rd.y;
+    t1 = min(t1, 60000.0);
+    float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + uFrame * 0.6180339);
+    float steps = uSteps;
+    float dt = (t1 - t0) / steps;
+    float T = 1.0; vec3 acc = vec3(0.0);
+    float mu = dot(rd, uSunDir);
+    // dual-lobe Henyey-Greenstein: forward silver lining + soft back scatter
+    float g1 = 0.7, g2 = -0.25;
+    float ph = 0.75 * (1.0 - g1 * g1) / pow(1.0 + g1 * g1 - 2.0 * g1 * mu, 1.5) + 0.25 * (1.0 - g2 * g2) / pow(1.0 + g2 * g2 - 2.0 * g2 * mu, 1.5);
+    ph = ph / 12.566 * 3.0 + 0.6;
+    float tHit = -1.0;
+    for (int i = 0; i < 48; i++) {
+      if (float(i) >= steps || T < 0.02) break;
+      float tt = t0 + dt * (float(i) + jit);
+      vec3 p = uCamPos + rd * tt;
+      float d = cloudD(p, true);
+      if (d > 0.001) {
+        if (tHit < 0.0) tHit = tt;
+        // light march toward the sun (3 taps)
+        float ld = cloudD(p + uSunDir * 160.0, false) * 160.0 + cloudD(p + uSunDir * 480.0, false) * 320.0 + cloudD(p + uSunDir * 1100.0, false) * 600.0;
+        float sig = 0.0045;
+        float Tl = exp(-ld * sig * 0.9) ;
+        float powder = 1.0 - exp(-d * 2.5);
+        float h = (p.y - CB) / (CT - CB);
+        vec3 amb = mix(uSkyAmb * vec3(0.55, 0.62, 0.78), uSkyAmb * 1.3 + vec3(0.05), smoothstep(0.0, 0.6, h));
+        vec3 L = uSunCol * Tl * ph * mix(0.5, 1.0, powder) * 1.35 + amb;
+        float a = 1.0 - exp(-d * sig * dt);
+        acc += T * a * L;
+        T *= 1.0 - a;
+      }
+    }
+    // aerial perspective on the clouds
+    float fa = tHit > 0.0 ? exp(-tHit / 38000.0) : 1.0;
+    vec3 cl = acc + sky0 * T;
+    col = mix(sky0, cl, fa);
+  }
+  vec3 prev = texture(uPrev, gl_FragCoord.xy / uRes).rgb;
+  o = vec4(mix(prev, col, uBlend), 1.0);
+}
+`;
+
+// ------------------------------------------------------------------ scene shading
+const FS_SHADE = `#version 300 es
+${COMMON}
+uniform sampler2D uG0, uG1, uG2, uSky;
+uniform vec3 uGrassDisp;     // integrated (slow) wind displacement -> rolling grass waves
+uniform vec2 uVeilDir;       // apparent screen-space fall direction of distant snow
+uniform float uVeilAmt, uDebug;
+uniform vec3 uSway;          // x: lateral wind (m/s), y: gust phase speed, z: focal length in px
+out vec4 o;
+
+// tree sway: treetops lean/oscillate with the wind. The G-buffer is static, so we invert the
+// displacement field with a 2-step fixed-point lookup (starting mid-tree so silhouettes move too).
+float treeH(vec4 g) { return floor(g.y + 0.001) == 2.0 ? fract(g.y + 0.001) / 0.9 : 0.0; }
+vec2 swayOff(float h, float t, vec2 frag) {
+  float w = uSway.x;
+  float osc = sin(uTime * (1.3 + 0.08 * abs(w)) + frag.x * 0.013 + frag.y * 0.007) * (0.25 + 0.05 * abs(w));
+  float disp = (0.012 * w + osc * 0.12) * h * h * 18.0;          // metres at the top of an ~18 m spruce
+  return vec2(disp / max(t, 1.0) * uSway.z, 0.0);
+}
+
+// distant falling snow seen as a translucent, streaky veil (two parallax layers)
+float veil(vec2 frag) {
+  vec2 uv = frag / uRes.y;
+  vec2 d = normalize(uVeilDir);
+  mat2 R = mat2(d.y, d.x, -d.x, d.y);
+  vec2 q = R * uv;
+  float s1 = tnoise(vec2(q.x * 210.0, q.y * 9.0 + uTime * (2.2 + 4.0 * uStorm)));
+  float s2 = tnoise(vec2(q.x * 120.0 + 31.0, q.y * 5.0 + uTime * (1.4 + 2.6 * uStorm)));
+  float big = tnoise(uv * 3.0 + vec2(uTime * 0.05, 0.0) - d * uTime * 0.25);
+  return (smoothstep(0.5, 1.0, s1) * 0.6 + smoothstep(0.45, 1.0, s2) * 0.6) * (0.55 + 0.9 * big);
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec4 g0 = texture(uG0, uv);
+  {
+    vec2 oMax = swayOff(1.0, g0.x, gl_FragCoord.xy);
+    if (abs(oMax.x) > 0.15 && g0.x < 6000.0) {
+      vec2 x = gl_FragCoord.xy - 0.5 * oMax;
+      for (int i = 0; i < 2; i++) { vec4 gi = texture(uG0, x / uRes); x = gl_FragCoord.xy - swayOff(treeH(gi), gi.x, gl_FragCoord.xy); }
+      vec4 gs = texture(uG0, x / uRes);
+      if (treeH(gs) > 0.0 || treeH(g0) > 0.0) { uv = x / uRes; g0 = gs; }
+    }
+  }
+  vec3 rd = camRay(uv * uRes);
+  float t = g0.x;
+  vec3 col;
+  if (t > 60000.0) {
+    col = texture(uSky, uv).rgb;
+    vec4 f = fogAt(30000.0, rd);
+    col = mix(col, f.rgb / max(1.0 - f.a, 1e-3), clamp(uFogP.z * 900.0, 0.0, 1.0) * smoothstep(0.35, -0.02, rd.y) * 0.95);
+    t = 30000.0;
+  } else {
+    vec4 g1 = texture(uG1, uv), g2 = texture(uG2, uv);
+    vec3 pos = uCamPos + rd * t;
+    vec3 nD = octDec(g2.xy), nS = octDec(g2.zw);
+    float mat = floor(g0.y + 0.001);
+    float grass = mat == 1.0 ? fract(g0.y + 0.001) / 0.9 : 0.0;
+    vec3 alb = g1.rgb;
+    float snowT = g1.w;
+    float snow = smoothstep(snowT - 0.07, snowT + 0.07, uCover);
+    float ao = g0.w;
+    float cs = cloudShadow(pos);
+    float sh = g0.z * cs;
+    // wind waves rolling over the grass (brightness sheen travelling with the wind)
+    vec2 gq = (pos.xz - uGrassDisp.xz * 1.0) * 0.045;
+    float wave = tnoise(gq) * 0.65 + tnoise(gq * 2.7 + 5.0) * 0.35;
+    alb *= 1.0 + grass * (1.0 - snow) * (wave - 0.5) * (0.22 + 0.25 * uStorm) * smoothstep(3000.0, 300.0, t);
+    vec3 n = normalize(mix(nD, nS, snow * 0.3));
+    vec3 snowAlb = vec3(0.84, 0.88, 0.94) * (mat == 2.0 ? 0.9 : 1.0);
+    vec2 rq = pos.xz * vec2(0.09, 0.3);
+    snowAlb *= 0.93 + 0.07 * tnoise(rq + vec2(rq.y * 0.4, 0.0)) * smoothstep(1500.0, 200.0, t);  // wind-packed ripples
+    vec3 a = mix(alb, snowAlb, snow);
+    float ndl = dot(n, uSunDir);
+    float wrap = 0.35 * snow;
+    float diff = clamp((ndl + wrap) / (1.0 + wrap), 0.0, 1.0);
+    vec3 skyL = uSkyAmb * (0.62 + 0.38 * n.y);
+    vec3 bounce = vec3(0.2, 0.22, 0.12) * dot(uSunCol, vec3(0.1)) * (0.5 - 0.5 * n.y) * mix(1.0, 3.0, uCover);
+    if (mat == 2.0) diff = diff * 0.75 + 0.1 * clamp(-ndl, 0.0, 1.0);       // needle canopy translucency
+    col = a * (uSunCol * diff * sh + (skyL + bounce) * ao);
+    // snow: blue-tinted subsurface glow in shade, soft sheen, sparkles
+    col += snow * a * uSkyAmb * vec3(0.10, 0.20, 0.42) * (1.0 - sh) * ao;
+    vec3 hv = normalize(uSunDir - rd);
+    float nh = max(dot(n, hv), 0.0);
+    col += snow * uSunCol * sh * (0.05 * pow(nh, 18.0) + 0.04 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0));
+    float sp = hash2(gl_FragCoord.xy + 0.5);
+    float tw = 0.5 + 0.5 * sin(uTime * (2.0 + 5.0 * fract(sp * 13.1)) + sp * 40.0);
+    float spark = step(1.0 - 0.011 * snow * snow * sh, fract(sp * 7.77)) * tw * smoothstep(2500.0, 150.0, t);
+    col += uSunCol * spark * 2.6;
+    if (uDebug > 0.5 && uDebug < 1.5) col = a * (0.2 + 0.8 * diff * sh) * ao;
+    if (uDebug > 1.5 && uDebug < 2.5) col = vec3(g0.z);
+    if (uDebug > 2.5 && uDebug < 3.5) col = vec3(g0.w);
+    if (uDebug > 3.5 && uDebug < 4.5) col = alb * 3.0;
+    if (uDebug > 4.5 && uDebug < 5.5) col = n * 0.5 + 0.5;
+    if (uDebug > 0.5) { o = vec4(col, 1.0); return; }
+  }
+  // aerial perspective + storm whiteout (+ drifting mist banks in the valley)
+  vec4 f = fogAtM(t, rd, mistBanks(rd, t));
+  col = col * f.a + f.rgb;
+  // distant snow veil (strong in blizzards)
+  float vamt = uVeilAmt * (1.0 - exp(-t / 900.0));
+  col = mix(col, uFogCol * 1.35 + uSunCol * 0.05, sat(vamt * veil(gl_FragCoord.xy)));
+  o = vec4(col, 1.0);
+}
+`;
+
+// ------------------------------------------------------------------ FXAA (scene only, before flakes)
+const FS_FXAA = `#version 300 es
+precision highp float;
+uniform sampler2D uTex; uniform vec2 uInv;
+out vec4 o;
+float L(vec3 c) { c = c / (1.0 + c); return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main() {
+  vec2 uv = gl_FragCoord.xy * uInv;
+  vec3 m = texture(uTex, uv).rgb;
+  float lNW = L(texture(uTex, uv + vec2(-1.0, -1.0) * uInv).rgb), lNE = L(texture(uTex, uv + vec2(1.0, -1.0) * uInv).rgb);
+  float lSW = L(texture(uTex, uv + vec2(-1.0, 1.0) * uInv).rgb), lSE = L(texture(uTex, uv + vec2(1.0, 1.0) * uInv).rgb);
+  float lM = L(m);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE))), lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  if (lMax - lMin < max(0.03, lMax * 0.1)) { o = vec4(m, 1.0); return; }
+  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));
+  float red = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);
+  dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + red), -6.0, 6.0) * uInv;
+  vec3 A = 0.5 * (texture(uTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(uTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 B = A * 0.5 + 0.25 * (texture(uTex, uv - dir * 0.5).rgb + texture(uTex, uv + dir * 0.5).rgb);
+  float lB = L(B);
+  o = vec4((lB < lMin || lB > lMax) ? A : B, 1.0);
+}
+`;
+
+// ------------------------------------------------------------------ snowflakes
+const VS_FLAKE = `#version 300 es
+${COMMON}
+uniform float uAspect, uFocalPx, uExpo, uCocK, uFocus;
+uniform vec3 uDispA, uDispB, uWindA, uWindB;
+uniform int uLayer;
+uniform vec4 uSlice;      // z0, z1, fade length
+uniform vec2 uHalfXY;
+uniform float uCount;
+uniform uint uSeed;
+uniform vec4 uMs[32];     // mouse segments: ndc position, ndc displacement
+uniform float uMa[32];    // segment ages (s)
+uniform int uMn;
+out vec2 vP;
+flat out vec4 vSeed;
+flat out vec4 vPar;       // radius px, blur px, type, aa
+flat out vec3 vRot;       // cos, sin (shape vs streak frame), squash
+out vec4 vCol;
+out float vDist;
+
+uvec4 pcg4d(uvec4 v) {
+  v = v * 1664525u + 1013904223u;
+  v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+  v ^= v >> 16u;
+  v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+  return v;
+}
+const vec2 CORNERS[4] = vec2[4](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0));
+
+void main() {
+  vec2 corner = CORNERS[gl_VertexID];
+  uint id = uint(gl_InstanceID);
+  // fixed per-flake randoms (stateless, reproducible)
+  uvec4 hA = pcg4d(uvec4(id, uint(uLayer) * 7919u + 17u, uSeed, 0x51ed27u));
+  uvec4 hB = pcg4d(hA ^ uvec4(0x9e3779b9u));
+  uvec4 hC = pcg4d(hB + uvec4(0x632be5abu));
+  vec4 r0 = vec4(hA >> 8u) * (1.0 / 16777216.0);
+  vec4 r1 = vec4(hB >> 8u) * (1.0 / 16777216.0);
+  vec4 r2 = vec4(hC >> 8u) * (1.0 / 16777216.0);
+
+  float z0 = uSlice.x, z1 = uSlice.y;
+  vec3 halfB = vec3(uHalfXY, 0.5 * (z1 - z0));
+  vec3 cen = vec3(0.0, 0.0, 0.5 * (z0 + z1));
+  vec3 bc = (r0.xyz * 2.0 - 1.0) * halfB;
+  vec3 bw = uCamR * bc.x + uCamU * bc.y + uCamF * bc.z;
+
+  float light = r0.w;                 // 0 = heavy clumped aggregate ... 1 = light crystal
+  float t = uTime;
+  float fall = mix(1.35, 0.55, light) * mix(0.85, 1.15, r1.x) * (1.0 + 0.9 * uStorm);
+  // per-flake inertia: blend of a sluggish and a quick wind response (light flakes respond more)
+  float resp = clamp(light * 0.8 + 0.2 * r1.y, 0.0, 1.0);
+  // NB: only affine mixes of the two integrals are allowed (weights sum to 1), otherwise the
+  // CPU-side lattice wrap of uDispA/uDispB would make flakes jump.
+  vec3 wdisp = mix(uDispA, uDispB, resp);
+  vec3 wvel = mix(uWindA, uWindB, resp);
+  // turbulence: travelling sine eddies over (base position, time) -> coherent yet never lockstep
+  float ta = mix(0.16, 1.7, uStorm);
+  vec3 ph = bw * vec3(0.37, 0.29, 0.33);
+  float a1 = ph.x + ph.y * 0.7 + 0.83 * t, a2 = ph.z - ph.x * 0.6 + 1.31 * t + 2.0, a3 = ph.y + ph.z * 0.5 + 0.57 * t + 4.0;
+  float tv = mix(0.6, 1.3, uStorm);   // updrafts / downdrafts in gusts
+  vec3 turb = ta * vec3(sin(a1) + 0.5 * sin(2.1 * a2), tv * sin(a3), sin(a2) + 0.5 * sin(1.7 * a1 + 1.0));
+  vec3 turbV = ta * vec3(0.83 * cos(a1) + 1.3755 * cos(2.1 * a2), tv * 0.57 * cos(a3), 1.31 * cos(a2) + 0.7055 * cos(1.7 * a1 + 1.0));
+  // flutter: per-flake helical wobble 0.5-2 Hz
+  float fw = mix(0.5, 2.0, r1.z) * 6.2831853;
+  float fr = mix(0.012, 0.1, light) * (1.0 + 0.8 * uStorm);
+  float fph = fw * t + r1.w * 6.2831853;
+  vec3 flut = fr * vec3(cos(fph), 0.4 * sin(2.0 * fph), sin(fph));
+  vec3 flutV = fr * fw * vec3(-sin(fph), 0.8 * cos(2.0 * fph), cos(fph));
+
+  vec3 pw = bw + wdisp + vec3(0.0, -fall * t, 0.0) + turb + flut;
+  // wrap inside the camera-aligned slice box -> constant density, no CPU work
+  vec3 qc = vec3(dot(pw, uCamR), dot(pw, uCamU), dot(pw, uCamF));
+  qc = mod(qc + halfB, 2.0 * halfB) - halfB;
+  vec3 cs = qc + cen;
+  vec3 vel = wvel + vec3(0.0, -fall, 0.0) + turbV + flutV;
+  vec3 vc = vec3(dot(vel, uCamR), dot(vel, uCamU), dot(vel, uCamF));
+
+  float zc = cs.z;
+  float wz = smoothstep(z0, z0 + uSlice.z, zc) * (1.0 - smoothstep(z1 - uSlice.z, z1, zc));
+  vec2 ndc = vec2(cs.x / (zc * uTanH * uAspect), cs.y / (zc * uTanH));
+  vec2 sv = vec2((vc.x * zc - cs.x * vc.z) / (zc * zc * uTanH * uAspect), (vc.y * zc - cs.y * vc.z) / (zc * zc * uTanH)) * 0.5 * uRes;
+
+  // local push / swirl around the cursor (screen space): each recent mouse segment drags nearby
+  // flakes along its motion and adds a counter-rotating vortex pair (a wake), easing out over ~2 s
+  if (uMn > 0) {
+    vec2 asp = vec2(uAspect, 1.0);
+    vec2 push = vec2(0.0);
+    for (int i = 0; i < 32; i++) {
+      if (i >= uMn) break;
+      vec4 m = uMs[i];
+      float age = uMa[i];
+      vec2 d = (ndc - m.xy) * asp;
+      float fo = exp(-dot(d, d) * 20.0);
+      float prof = (1.0 - exp(-age * 9.0)) * exp(-age * 0.55) * smoothstep(2.8, 1.9, age);
+      vec2 mv = m.zw * asp;
+      float side = sign(d.x * mv.y - d.y * mv.x);
+      push += (mv * 1.25 + vec2(-d.y, d.x) * side * length(mv) * 3.6) * fo * prof;
+    }
+    float pwgt = mix(1.0, 0.3, smoothstep(3.0, 60.0, zc));
+    ndc += push / asp * pwgt;
+  }
+
+  // size / type per layer
+  float type, size, baseA;
+  if (uLayer == 0) { size = mix(0.006, 0.013, r2.x); type = 0.0; baseA = 0.9; }
+  else if (uLayer == 1 || uLayer == 4) {
+    type = light > (uLayer == 4 ? 0.3 : 0.42) ? (r2.y > 0.38 ? 1.0 : 2.0) : 3.0;   // 1 dendrite, 2 plate, 3 aggregate
+    size = type == 3.0 ? mix(0.032, 0.075, r2.x * r2.x) : mix(0.026, 0.062, r2.x * r2.x);
+    if (uLayer == 4) size = type == 3.0 ? mix(0.04, 0.075, r2.x) : mix(0.04, 0.085, r2.x);   // close "hero" flakes
+    baseA = 0.92;
+  } else if (uLayer == 2) { size = mix(0.014, 0.036, r2.x); type = 4.0; baseA = 0.85; }
+  else { size = mix(0.012, 0.028, r2.x); type = 5.0; baseA = 0.85; }
+  float rTrue = 0.5 * size / max(zc, 0.05) * uFocalPx;
+  float speed = length(sv);
+  float blur = speed * uExpo;
+  vec2 dir = speed > 1e-3 ? sv / speed : vec2(0.0, -1.0);
+  float coc = uCocK * max(0.0, 1.0 / max(zc, 0.05) - 1.0 / uFocus);
+  float rD, aa, a = baseA;
+  if (uLayer == 0) { rD = max(rTrue, coc) + 0.5; aa = 0.35; a *= clamp(sq(rTrue / rD) * 5.0, 0.025, 0.13); }
+  else if (uLayer == 1 || uLayer == 4) { rD = rTrue + 0.35 * coc; aa = (0.9 + 0.6 * coc) / max(rD, 0.5); a *= min(1.0, sq((rTrue + 0.5) / (rD + 0.5))); }
+  else { rD = max(rTrue, 0.75); aa = 0.0; a *= min(1.0, sq(rTrue / rD) * 1.6); }
+  if (uLayer != 1 && uLayer != 4) a *= (2.0 * rD) / (2.0 * rD + blur);
+  if (uLayer == 3) a *= 1.0 - 0.6 * uStorm;
+  if (uLayer == 2) a *= 1.0 - 0.35 * uStorm;
+  if (uLayer == 4 || uLayer == 0) a *= 1.0 - 0.5 * uStorm;
+  a *= wz * clamp(uCount - float(id), 0.0, 1.0);
+
+  // rotation, tumble (squash) and sparkle
+  float ang = r2.z * 6.2831853 + (r1.y - 0.5) * 2.2 * t * (0.3 + light);
+  float tum = r2.w * 6.2831853 + mix(0.5, 2.6, r1.z) * t * (1.0 + 0.8 * uStorm);
+  float squash = max(abs(cos(tum)), 0.22);
+  float rel = atan(dir.y, dir.x) - ang;
+
+  vec3 pW = uCamPos + uCamR * cs.x + uCamU * cs.y + uCamF * cs.z;
+  float dist = length(cs);
+  vec3 V = (pW - uCamPos) / dist;
+  float mu = dot(V, uSunDir);
+  float g = 0.62;
+  float hg = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;       // forward scattering
+  float facing = abs(cos(tum));
+  vec3 col = uSunCol * (0.30 + 0.22 * facing + hg) * cloudShadow(pW) + uSkyAmb * mix(0.95, 1.75, uStorm);
+  if (type > 0.5 && type < 2.5) {
+    float glint = pow(max(cos(tum * 2.0 + r0.x * 6.2831853), 0.0), 160.0) * step(0.55, r2.y);
+    col += uSunCol * glint * (uLayer == 4 ? 1.2 : 2.5) * (1.0 - uStorm * 0.85);
+  }
+  col *= mix(0.92, 1.06, r1.w);
+  vec4 fg = fogAt(dist, V);
+  col = col * fg.a + fg.rgb;
+
+  if (zc < 0.08 || abs(ndc.x) > 1.12 || abs(ndc.y) > 1.12 || a < 0.0015) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+
+  float hl = rD + 0.5 * blur + 1.2, hw = rD + 1.2;
+  vec2 perp = vec2(-dir.y, dir.x);
+  vec2 offPx = dir * corner.x * hl + perp * corner.y * hw;
+  gl_Position = vec4(ndc + offPx / (0.5 * uRes), 0.0, 1.0);
+  vP = vec2(corner.x * hl, corner.y * hw);
+  vSeed = r1.wzyx * 0.7 + r2.yxwz * 0.3;
+  vPar = vec4(rD, blur, type, aa);
+  vRot = vec3(cos(rel), sin(rel), squash);
+  vCol = vec4(col, a);
+  vDist = dist;
+}
+`;
+
+const FS_FLAKE = `#version 300 es
+precision highp float; precision highp int;
+uniform sampler2D uG0;
+uniform vec2 uRes;
+uniform int uLayer;
+in vec2 vP;
+flat in vec4 vSeed;
+flat in vec4 vPar;
+flat in vec3 vRot;
+in vec4 vCol;
+in float vDist;
+out vec4 o;
+
+float sdSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+// fold the plane into one 30-degree wedge: 6-fold rotational + mirror symmetry of ice crystals
+vec2 foldD6(vec2 q) {
+  float r = length(q);
+  float a = atan(q.y, q.x);
+  a = abs(mod(a + 0.5235988, 1.0471976) - 0.5235988);
+  return r * vec2(cos(a), sin(a));
+}
+// stellar dendrite: tapered main arm with side branches at 60 degrees (kept inside the wedge so
+// neighbouring arms never collide), sub-branchlets on big flakes, hexagonal core with an inner ring.
+float dendrite(vec2 q, vec4 s, float aa) {
+  if (dot(q, q) > 1.12) return 0.0;
+  vec2 p = foldD6(q);
+  float w = max(mix(0.04, 0.075, s.x), 0.9 * aa);          // never thinner than ~1 px (no aliasing)
+  float d = sdSeg(p, vec2(0.0), vec2(0.92, 0.0)) - w * (1.0 - 0.45 * p.x);
+  bool fine = aa < 0.036;                                    // branchlets only on big flakes (r > ~28 px)
+  vec2 bd = vec2(0.5, 0.8660254);
+  float b0 = mix(0.2, 0.3, s.y), bs = mix(0.13, 0.17, s.z);
+  for (int k = 0; k < 4; k++) {
+    float fk = float(k);
+    float x = b0 + fk * bs;
+    if (x > 0.86) break;
+    float L = min((0.97 - x) * mix(0.55, 0.95, fract(s.w * 3.7 + fk * 0.31)), x * 0.9);
+    vec2 a0 = vec2(x, 0.0), a1 = a0 + bd * L;
+    d = min(d, sdSeg(p, a0, a1) - max(w * 0.62, 0.8 * aa));
+    if (fine) {   // branchlets parallel to the main arm, sprouting from the branch
+      vec2 m = a0 + bd * (L * 0.55);
+      d = min(d, sdSeg(p, m, m + vec2(L * 0.32, 0.0)) - max(w * 0.42, 0.75 * aa));
+    }
+  }
+  float hexd = dot(p, vec2(0.8660254, 0.5));
+  float core = mix(0.09, 0.2, s.w);
+  d = min(d, hexd - core);
+  float c = 1.0 - smoothstep(-aa, aa, d);
+  float rim = smoothstep(-w * 0.9 - aa, 0.0, d);                           // edges catch the light
+  float ridge = 1.0 - smoothstep(0.0, 0.025 + aa, p.y);
+  float ring = 1.0 - smoothstep(0.0, 0.02 + aa, abs(hexd - core * 0.6));
+  return c * (0.6 + 0.3 * rim + 0.25 * ridge + 0.2 * ring);
+}
+// hexagonal / stellar plate with ridges, an inner hexagon line and bright rims
+float plate(vec2 q, vec4 s, float aa) {
+  if (dot(q, q) > 1.12) return 0.0;
+  vec2 p = foldD6(q);
+  float R = mix(0.62, 0.92, s.x);
+  float hexd = dot(p, vec2(0.8660254, 0.5));
+  float d;
+  if (s.y > 0.45) {   // stellar plate: broad arms widening toward the tip
+    float wArm = 0.07 + 0.2 * smoothstep(0.3, 0.95, p.x / R);
+    d = min(max(p.y - wArm * R, p.x - R), hexd - 0.3 * R);
+  } else d = hexd - R * 0.8660254;
+  float c = 1.0 - smoothstep(-aa, aa, d);
+  float ridge = 1.0 - smoothstep(0.0, 0.025 + aa, p.y);
+  float inner = 1.0 - smoothstep(0.0, 0.025 + aa, abs(hexd - 0.4 * R));
+  float rim = smoothstep(-0.07 - aa, 0.0, d);
+  return c * (0.5 + 0.28 * ridge + 0.22 * inner + 0.35 * rim);
+}
+// one small six-armed crystal used inside aggregates
+float miniStar(vec2 q, float aa) {
+  vec2 p = foldD6(q);
+  float d = sdSeg(p, vec2(0.0), vec2(0.92, 0.0)) - 0.1 * (1.0 - 0.4 * p.x);
+  d = min(d, sdSeg(p, vec2(0.5, 0.0), vec2(0.5, 0.0) + vec2(0.5, 0.866) * 0.36) - 0.07);
+  d = min(d, dot(p, vec2(0.866, 0.5)) - 0.2);
+  return 1.0 - smoothstep(-aa, aa, d);
+}
+// clumped aggregate (most large real flakes): a soft translucent lumpy core with a few
+// tumbled crystals fused into it, their arms poking out of the outline
+float aggregate(vec2 q, vec4 s, float aa) {
+  if (dot(q, q) > 1.12) return 0.0;
+  uint h = floatBitsToUint(s.x * 9.71 + s.y) ^ 0x9e3779b9u;
+  float rr = length(q);
+  float ang0 = atan(q.y, q.x);
+  float lump = 0.5 + 0.09 * sin(3.0 * ang0 + s.z * 6.0) + 0.06 * sin(5.0 * ang0 + s.w * 6.0) + 0.04 * sin(8.0 * ang0 + s.x * 6.0);
+  float core = 1.0 - smoothstep(lump - 0.3 - aa, lump + aa, rr);
+  float tex = 0.75 + 0.25 * sin(q.x * 9.0 + s.z * 6.0) * sin(q.y * 8.0 + s.w * 6.0);
+  float c = core * core * 0.42 * tex;                                    // translucent, denser centre
+  for (int k = 0; k < 3; k++) {
+    h = h * 747796405u + 2891336453u;
+    uint h2 = (h >> 5u) * 2654435761u;
+    vec4 r = vec4(float(h >> 8u), float(h2 >> 8u), float((h2 * 1103515245u) >> 8u), float((h * 22695477u) >> 8u)) / 16777216.0;
+    vec2 off = (r.xy - 0.5) * 0.45;
+    float sc = mix(0.45, 0.62, r.z);
+    float an = r.w * 6.2831853;
+    vec2 qq = q - off;
+    qq = vec2(cos(an) * qq.x - sin(an) * qq.y, sin(an) * qq.x + cos(an) * qq.y) / sc;
+    qq.y /= mix(0.5, 1.0, fract(r.w * 7.3));                                 // tilted crystal
+    if (dot(qq, qq) < 1.1) c = max(c, miniStar(qq, aa / sc) * mix(0.8, 1.0, r.z));
+  }
+  return c;
+}
+float shapeAt(vec2 sp) {
+  vec2 q = vec2(vRot.x * sp.x - vRot.y * sp.y, vRot.y * sp.x + vRot.x * sp.y) / vPar.x;
+  q.y /= vRot.z;
+  float aa = vPar.w;
+  if (vPar.z < 1.5) return dendrite(q, vSeed, aa);
+  if (vPar.z < 2.5) return plate(q, vSeed, aa);
+  return aggregate(q, vSeed, aa);
+}
+void main() {
+  float rPx = vPar.x, blur = vPar.y;
+  float cov;
+  if ((uLayer == 1 || uLayer == 4) && blur < 3.5 * rPx) {
+    // true motion blur of the crystal shape: average taps along the streak (spacing <= 0.3 r)
+    int taps = int(clamp(ceil(blur / max(1.0, 0.3 * rPx)) + 1.0, 1.0, 13.0));
+    float acc = 0.0;
+    for (int k = 0; k < 13; k++) {
+      if (k >= taps) break;
+      float off = taps > 1 ? (float(k) / float(taps - 1) - 0.5) * blur : 0.0;
+      acc += shapeAt(vP - vec2(off, 0.0));
+    }
+    cov = acc / float(taps);
+  } else if (uLayer == 1 || uLayer == 4) {
+    // long streak: the crystal detail is smeared out anyway -> analytic soft capsule,
+    // energy-normalised against the streak length, slightly brighter core
+    vec2 q = vec2(max(abs(vP.x) - 0.5 * blur, 0.0), vP.y);
+    float d = length(q) / (rPx * 0.55);
+    float along = 1.0 - smoothstep(0.3, 0.5, abs(vP.x) / (blur + 2.0 * rPx));       // soft streak ends
+    // a flake sweeping 'blur' px covers each pixel for ~2r/blur of the exposure
+    cov = exp(-d * d * 2.0) * (0.55 + 0.45 * along) * min(1.0, 2.0 * rPx / (blur + 2.0 * rPx)) * 1.5;
+    cov *= 0.7 + 0.3 * sin(vP.x / max(rPx, 1.0) * 0.9 + vSeed.x * 40.0);          // tumbling flicker along the streak
+  } else {
+    // capsule = analytically motion-blurred disc
+    vec2 q = vec2(max(abs(vP.x) - 0.5 * blur, 0.0), vP.y);
+    float d = length(q) / rPx;
+    if (uLayer == 0) {
+      float edge = 1.0 - smoothstep(1.0 - vPar.w, 1.0, d);
+      cov = edge * (0.7 + 0.55 * smoothstep(0.5, 0.97, d));      // bokeh disc with a brighter rim
+    } else cov = exp(-d * d * 2.3);
+  }
+  // soft occlusion against the scene (G-buffer ray distance)
+  float st = texture(uG0, gl_FragCoord.xy / uRes).x;
+  float occ = clamp((st - vDist) / max(0.4, 0.05 * vDist), 0.0, 1.0);
+  float a = clamp(cov * vCol.a * occ, 0.0, 1.0);
+  if (a < 0.0015) discard;
+  o = vec4(vCol.rgb * a, a);    // premultiplied alpha
+}
+`;
+
+// ------------------------------------------------------------------ bloom + composite
+const FS_DOWN = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc; uniform vec2 uSrcInv; uniform vec2 uDstRes; uniform float uThresh;
+out vec4 o;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstRes;
+  vec3 c = texture(uSrc, uv + uSrcInv * vec2(-1.0, -1.0)).rgb + texture(uSrc, uv + uSrcInv * vec2(1.0, -1.0)).rgb
+         + texture(uSrc, uv + uSrcInv * vec2(-1.0, 1.0)).rgb + texture(uSrc, uv + uSrcInv * vec2(1.0, 1.0)).rgb;
+  c *= 0.25;
+  if (uThresh > 0.0) { float l = max(c.r, max(c.g, c.b)); c *= max(l - uThresh, 0.0) / max(l, 1e-4); c = min(c, vec3(30.0)); }
+  o = vec4(c, 1.0);
+}`;
+const FS_UP = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc; uniform vec2 uSrcInv; uniform vec2 uDstRes;
+out vec4 o;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstRes;
+  vec3 c = texture(uSrc, uv).rgb * 4.0;
+  c += (texture(uSrc, uv + vec2(uSrcInv.x, 0.0)).rgb + texture(uSrc, uv - vec2(uSrcInv.x, 0.0)).rgb + texture(uSrc, uv + vec2(0.0, uSrcInv.y)).rgb + texture(uSrc, uv - vec2(0.0, uSrcInv.y)).rgb) * 2.0;
+  c += texture(uSrc, uv + uSrcInv).rgb + texture(uSrc, uv - uSrcInv).rgb + texture(uSrc, uv + vec2(uSrcInv.x, -uSrcInv.y)).rgb + texture(uSrc, uv + vec2(-uSrcInv.x, uSrcInv.y)).rgb;
+  o = vec4(c / 16.0, 1.0);
+}`;
+const FS_COMP = `#version 300 es
+precision highp float;
+uniform sampler2D uHdr, uBloom;
+uniform vec2 uRes;
+uniform float uExposure, uBloomStr, uFade, uFrame, uStorm;
+out vec4 o;
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+float h12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec3 c = texture(uHdr, uv).rgb + texture(uBloom, uv).rgb * uBloomStr;
+  c *= uExposure;
+  c *= vec3(0.97, 1.0, 1.035);                       // cool, fresh white balance
+  c = aces(c);
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, 1.0 - 0.12 * uStorm);
+  c = mix(c, c * vec3(0.96, 0.99, 1.05) + vec3(0.0, 0.004, 0.012), 1.0 - l);  // cool lift in the shadows
+  vec2 vq = uv - 0.5;
+  c *= 1.0 - 0.28 * smoothstep(0.25, 0.95, length(vq * vec2(1.25, 1.0)));     // vignette
+  c = pow(c, vec3(1.0 / 2.2));
+  c += (h12(gl_FragCoord.xy + fract(uFrame * 0.618) * 913.0) - 0.5) * 0.022; // film grain / dither
+  c = mix(vec3(0.80, 0.85, 0.90), c, uFade);
+  o = vec4(c, 1.0);
+}`;
+
+// =====================================================================================
+//                                   GL helpers
+// =====================================================================================
+function compile(type, src, name) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(s);
+    const lines = src.split('\n');
+    const m = /ERROR: \d+:(\d+)/.exec(log);
+    const ln = m ? +m[1] : 0;
+    console.error(`[${name}] shader compile error:\n${log}\n` + lines.slice(Math.max(0, ln - 4), ln + 3).map((l, i) => (Math.max(0, ln - 4) + i + 1) + ': ' + l).join('\n'));
+    throw new Error('shader compile failed: ' + name);
+  }
+  return s;
+}
+function program(vs, fs, name) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs, name + '.vs'));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs, name + '.fs'));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.error(`[${name}] link error: ` + gl.getProgramInfoLog(p)); throw new Error('link failed: ' + name); }
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(p, i); const nm = info.name.replace(/\[0\]$/, ''); u[nm] = gl.getUniformLocation(p, info.name); }
+  return { p, u };
+}
+function tex(w, h, ifmt, fmt, type, filter, wrap) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap || gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap || gl.CLAMP_TO_EDGE);
+  return t;
+}
+function rt(w, h, n, filter) {
+  const texs = [];
+  for (let i = 0; i < n; i++) texs.push(tex(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, filter));
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  texs.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0));
+  gl.drawBuffers(texs.map((_, i) => gl.COLOR_ATTACHMENT0 + i));
+  const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if (st !== gl.FRAMEBUFFER_COMPLETE) console.error('framebuffer incomplete', st);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return { fbo, texs, w, h };
+}
+function freeRT(r) { if (!r) return; r.texs.forEach(t => gl.deleteTexture(t)); gl.deleteFramebuffer(r.fbo); }
+
+let P;
+try {
+  P = {
+    gbuf: program(VS_FULL, FS_GBUF, 'gbuf'),
+    sky: program(VS_FULL, FS_SKY, 'sky'),
+    shade: program(VS_FULL, FS_SHADE, 'shade'),
+    fxaa: program(VS_FULL, FS_FXAA, 'fxaa'),
+    flake: program(VS_FLAKE, FS_FLAKE, 'flake'),
+    down: program(VS_FULL, FS_DOWN, 'down'),
+    up: program(VS_FULL, FS_UP, 'up'),
+    comp: program(VS_FULL, FS_COMP, 'comp'),
+  };
+} catch (e) { fatal('셰이더 컴파일 실패: ' + e.message); }
+const vao = gl.createVertexArray();
+gl.bindVertexArray(vao);
+
+// noise texture (RGBA8 256^2): G = A(x,y), R = A(x+37, y+17)  (3D-noise trick)
+const noiseTex = (() => {
+  const N = 256, A = new Uint8Array(N * N), rnd = mulberry32(0xC0FFEE);
+  for (let i = 0; i < N * N; i++) A[i] = Math.floor(rnd() * 256);
+  const D = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = (y * N + x) * 4;
+    D[i] = A[((y + 17) & 255) * N + ((x + 37) & 255)]; D[i + 1] = A[y * N + x]; D[i + 2] = A[((y * 7 + 3) & 255) * N + ((x * 3 + 11) & 255)]; D[i + 3] = 255;
+  }
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, N, N, 0, gl.RGBA, gl.UNSIGNED_BYTE, D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  return t;
+})();
+
+// =====================================================================================
+//                                   render targets
+// =====================================================================================
+const R = { W: 0, H: 0, gbCur: null, gbNext: null, gbRow: 0, scene: null, hdr: null, sky: [null, null], skyI: 0, skyReset: true, bloom: [] };
+let quality = 1.0;        // adaptive: 1 = full
+let readyTime = -1, buildStart = performance.now(), buildMs = 0;
+function allocate() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const W = Math.max(64, Math.round(innerWidth * dpr)), H = Math.max(64, Math.round(innerHeight * dpr));
+  if (W === R.W && H === R.H) return;
+  R.W = W; R.H = H; canvas.width = W; canvas.height = H;
+  freeRT(R.gbNext);
+  R.gbNext = rt(W, H, 3, gl.NEAREST); R.gbRow = 0; buildStart = performance.now();
+  freeRT(R.scene); freeRT(R.hdr);
+  R.scene = rt(W, H, 1, gl.LINEAR); R.hdr = rt(W, H, 1, gl.LINEAR);
+  freeRT(R.sky[0]); freeRT(R.sky[1]);
+  const sw = Math.ceil(W / 2), sh = Math.ceil(H / 2);
+  R.sky = [rt(sw, sh, 1, gl.LINEAR), rt(sw, sh, 1, gl.LINEAR)]; R.skyReset = true;
+  R.bloom.forEach(freeRT); R.bloom = [];
+  let bw = Math.ceil(W / 2), bh = Math.ceil(H / 2);
+  for (let i = 0; i < 6 && bw >= 8 && bh >= 8; i++) { R.bloom.push(rt(bw, bh, 1, gl.LINEAR)); bw = Math.ceil(bw / 2); bh = Math.ceil(bh / 2); }
+  layoutLayers();
+}
+let resizeTimer = 0;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(allocate, 150); });
+
+// =====================================================================================
+//                                   simulation state
+// =====================================================================================
+// flake layers (camera-space depth slices). counts at density x1; max = hard cap
+const LAYERS = [
+  // storm: per-layer density multiplier at full blizzard (total flake count ends up > x6)
+  { id: 3, z0: 26, z1: 240, fade: 22, base: 46000, max: 125000, storm: 6.5 },
+  { id: 2, z0: 8, z1: 30, fade: 4, base: 12000, max: 50000, storm: 6.5 },
+  { id: 1, z0: 2.3, z1: 9.0, fade: 0.9, base: 2500, max: 14000, storm: 3.2 },
+  { id: 4, z0: 0.75, z1: 3.0, fade: 0.35, base: 100, max: 600, storm: 1.6 },
+  { id: 0, z0: 0.22, z1: 0.95, fade: 0.18, base: 26, max: 200, storm: 2.5 },
+];
+function layoutLayers() {
+  const asp = R.W / R.H;
+  for (const L of LAYERS) { L.hx = L.z1 * TANH * asp * 1.1 + 0.3; L.hy = L.z1 * TANH * 1.1 + 0.3; }
+}
+
+const sim = {
+  time: 0, coverage: 0, amount: 0.5, auto: STORM_Q !== '0', forced: STORM_Q === '1' ? 1 : null, storm: 0,
+  storms: [], windA: [0, 0, 0], windB: [0, 0, 0], dispA: [0, 0, 0], dispB: [0, 0, 0], cloud: [0, 0],
+  gust: 0, bias: 0, flakeCount: 0, fps: 60, baseWind: [0.9, 0, 0.35],
+};
+if (WIND_Q.length === 2 && WIND_Q.every(isFinite)) sim.baseWind = [WIND_Q[0], 0, WIND_Q[1]];
+
+// deterministic blizzard schedule from the seed
+(function schedule() {
+  const rnd = mulberry32(SEED * 7919 + 13);
+  let s = 60 + rnd() * 30;
+  while (s < 6 * 3600) {
+    const dur = 30 + rnd() * 30, ramp = 8 + rnd() * 2;
+    sim.storms.push({ start: s, dur, ramp });
+    s += 120 + rnd() * 120;
+  }
+})();
+function stormEnv(t) {
+  let v = 0;
+  for (const s of sim.storms) {
+    if (s.manual ? false : !sim.auto) continue;
+    if (t < s.start || t > s.start + s.dur) continue;
+    v = Math.max(v, Math.min(smooth(s.start, s.start + s.ramp, t), 1 - smooth(s.start + s.dur - s.ramp, s.start + s.dur, t)));
+  }
+  return v;
+}
+function stormAt(t) { return sim.forced !== null ? sim.forced : stormEnv(t); }
+const amountMul = () => 0.2 + 1.6 * sim.amount;
+// accumulation: dc/dt = k (1.2 - c)(1 + 4 storm) * amount  -> ~5 min to near-full in calm, ~5x faster in a blizzard
+function accumulate(c, s, dt) { return Math.min(1, c + 0.00523 * Math.max(0, 1.2 - c) * (1 + 4 * s) * amountMul() * dt); }
+
+// fast-forward for ?t=
+(function fastForward() {
+  let c = 0;
+  for (let t = 0; t < T0; t += 0.25) c = accumulate(c, stormAt(t), Math.min(0.25, T0 - t));
+  sim.coverage = c; sim.time = T0;
+  if (COVER_Q !== null) sim.coverage = COVER_Q;
+  const w = sim.baseWind;
+  sim.windA = [...w]; sim.windB = [...w];
+  sim.dispA = w.map(v => v * T0); sim.dispB = [...sim.dispA];
+  sim.cloud = [(w[0] * 3 + 3) * T0, (w[2] * 3 + 1) * T0];
+})();
+const holdCoverage = COVER_Q !== null && STORM_Q === '0';
+
+// ------------------------------------------------------------------ mouse wind
+const mouse = { inside: false, x: 0, y: 0, lx: null, ly: null, lt: 0, vx: 0, acc: [0, 0], segT: 0, segs: [] };
+addEventListener('pointermove', e => {
+  const now = performance.now() / 1000;
+  if (e.target && e.target.closest && e.target.closest('#ui')) { mouse.lx = null; return; }   // slider drags make no gusts
+  const W = innerWidth, H = innerHeight;
+  mouse.inside = true;
+  mouse.x = e.clientX / W * 2 - 1; mouse.y = 1 - e.clientY / H * 2;
+  if (mouse.lx !== null) {
+    const dx = e.clientX - mouse.lx, dy = e.clientY - mouse.ly, dtE = Math.max(now - mouse.lt, 0.004);
+    const vInst = dx / dtE;
+    mouse.vx = lerp(mouse.vx, vInst, 0.35);
+    mouse.acc[0] += dx / W * 2; mouse.acc[1] += -dy / H * 2;
+    if (now - mouse.segT > 0.035) {
+      if (Math.hypot(mouse.acc[0], mouse.acc[1]) > 1e-4) {
+        mouse.segs.push({ x: mouse.x, y: mouse.y, dx: mouse.acc[0], dy: mouse.acc[1], t: sim.wall });
+        if (mouse.segs.length > 32) mouse.segs.shift();
+      }
+      mouse.acc = [0, 0]; mouse.segT = now;
+    }
+  }
+  mouse.lx = e.clientX; mouse.ly = e.clientY; mouse.lt = now;
+}, { passive: true });
+addEventListener('mouseout', e => { if (!e.relatedTarget) { mouse.inside = false; mouse.lx = null; } });
+addEventListener('blur', () => { mouse.inside = false; mouse.lx = null; });
+sim.wall = 0;
+
+// ------------------------------------------------------------------ UI
+const ui = document.getElementById('ui');
+if (!SHOW_UI) ui.classList.add('hidden');
+const elAmount = document.getElementById('amount'), elAmountV = document.getElementById('amountv');
+elAmount.addEventListener('input', () => { sim.amount = +elAmount.value; elAmountV.textContent = Math.round(sim.amount * 100) + '%'; });
+const elAuto = document.getElementById('auto');
+elAuto.checked = sim.auto;
+elAuto.addEventListener('change', () => { sim.auto = elAuto.checked; });
+function triggerBlizzard(dur = 45) {
+  const now = sim.time;
+  sim.forced = null;
+  // push scheduled storms that would overlap out of the way
+  sim.storms = sim.storms.filter(s => s.manual || s.start + s.dur < now || s.start > now + dur + 60);
+  sim.storms.push({ start: now, dur, ramp: 9, manual: true });
+  sim.storms.sort((a, b) => a.start - b.start);
+}
+document.getElementById('blizzard').addEventListener('click', () => triggerBlizzard());
+document.getElementById('reset').addEventListener('click', () => { sim.coverage = 0; });
+const elArrow = document.getElementById('arrow'), elWindV = document.getElementById('windv');
+const hint = document.getElementById('hint');
+
+window.snowSim = {
+  state: () => ({ coverage: +sim.coverage.toFixed(4), storm: +sim.storm.toFixed(4), windX: +((sim.windA[0] + sim.windB[0]) / 2).toFixed(3), windZ: +((sim.windA[2] + sim.windB[2]) / 2).toFixed(3), flakeCount: sim.flakeCount, fps: +sim.fps.toFixed(1), ready: readyTime >= 0, quality, buildMs: Math.round(buildMs), res: [R.W, R.H] }),
+  setCoverage: v => { sim.coverage = clamp(+v || 0, 0, 1); },
+  setStorm: v => { sim.forced = (v === null || v === undefined) ? null : clamp(+v, 0, 1); sim.storm = stormAt(sim.time); },
+  reset: () => { sim.coverage = 0; },
+};
+
+// =====================================================================================
+//                                   frame loop
+// =====================================================================================
+function setCommon(u, W, H) {
+  gl.uniform2f(u.uRes, W, H);
+  gl.uniform3fv(u.uCamPos, CAM.pos); gl.uniform3fv(u.uCamR, camR); gl.uniform3fv(u.uCamU, camU); gl.uniform3fv(u.uCamF, camF);
+  gl.uniform1f(u.uTanH, TANH);
+  gl.uniform3fv(u.uSunDir, SUN);
+  if (u.uTime) gl.uniform1f(u.uTime, sim.time % 3600);
+  if (u.uStorm) gl.uniform1f(u.uStorm, sim.storm);
+  if (u.uCover) gl.uniform1f(u.uCover, sim.coverage);
+  const L = lighting;
+  if (u.uSunCol) gl.uniform3fv(u.uSunCol, L.sun);
+  if (u.uSkyAmb) gl.uniform3fv(u.uSkyAmb, L.amb);
+  if (u.uSkyZen) gl.uniform3fv(u.uSkyZen, L.zen);
+  if (u.uSkyHor) gl.uniform3fv(u.uSkyHor, L.hor);
+  if (u.uFogCol) gl.uniform3fv(u.uFogCol, L.fog);
+  if (u.uFogP) gl.uniform4fv(u.uFogP, L.fogP);
+  if (u.uCloudOff) gl.uniform2f(u.uCloudOff, sim.cloud[0] % 100000, sim.cloud[1] % 100000);
+  if (u.uCloudCov) gl.uniform1f(u.uCloudCov, lerp(0.56, 0.98, smooth(0, 1, sim.storm)));
+  if (u.uNoise) { gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D, noiseTex); gl.uniform1i(u.uNoise, 7); }
+}
+const lighting = { sun: [0, 0, 0], amb: [0, 0, 0], zen: [0, 0, 0], hor: [0, 0, 0], fog: [0, 0, 0], fogP: [0, 0, 0, 0] };
+const mix3 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
+function updateLighting(s) {
+  const sd = smooth(0, 1, s);
+  lighting.sun = [1.0 * 3.1, 0.955 * 3.1, 0.89 * 3.1].map(v => v * (1 - 0.86 * sd));
+  lighting.amb = mix3([0.30, 0.40, 0.60], [0.46, 0.50, 0.57], sd);
+  lighting.zen = mix3([0.11, 0.26, 0.66], [0.40, 0.44, 0.50], sd);
+  lighting.hor = mix3([0.60, 0.72, 0.88], [0.50, 0.54, 0.60], sd);
+  lighting.fog = mix3([0.56, 0.68, 0.86], [0.44, 0.48, 0.54], sd);
+  lighting.fogP = [1 / 33000 * (1 + 3.5 * sd), 2200, 0.0015 * Math.pow(sd, 1.5), 1 / 12000 * (1 + 2.0 * sd)];
+}
+function bindTex(unit, t, loc) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(loc, unit); }
+function drawFull() { gl.drawArrays(gl.TRIANGLES, 0, 3); }
+
+let lastNow = performance.now() / 1000, frameNo = 0, fpsAcc = 0, fpsN = 0, lowT = 0;
+const msArr = new Float32Array(32 * 4), maArr = new Float32Array(32);
+
+function update(dt) {
+  sim.wall += dt;
+  if (FREEZE) { updateLighting(sim.storm); mouse.segs = mouse.segs.filter(m => sim.wall - m.t < 2.8); return; }
+  sim.time += dt;
+  const t = sim.time;
+  // storm
+  sim.storm = stormAt(t);
+  const s = sim.storm;
+  // wind target: calm breeze (natural gusts) or blizzard gale + mouse bias + mouse gust
+  const g1 = Math.sin(t * 0.37) * 0.5 + Math.sin(t * 0.91 + 1.3) * 0.3 + Math.sin(t * 2.3 + 0.4) * 0.2;
+  const g2 = Math.sin(t * 0.53 + 2.0) * 0.45 + Math.sin(t * 1.37 + 0.7) * 0.35 + Math.sin(t * 3.1) * 0.2;
+  const calm = sim.baseWind.map(v => v * (1 + 0.45 * g1));
+  const stormMag = 10.5 + 4.0 * g2;
+  const sdir = [camR[0] * 0.88 + camF[0] * 0.3, 0, camR[2] * 0.88 + camF[2] * 0.3];
+  const sl = Math.hypot(sdir[0], sdir[2]); sdir[0] /= sl; sdir[2] /= sl;
+  // mouse: steady bias from x-position, gust from horizontal velocity (fast attack, slow release)
+  mouse.vx *= Math.exp(-dt / 0.09);
+  const biasT = mouse.inside ? mouse.x * 3.0 : 0;
+  sim.bias += (biasT - sim.bias) * (1 - Math.exp(-dt / 0.8));
+  const gustT = clamp(mouse.vx / innerWidth * 10.0, -14, 14);
+  const k = Math.abs(gustT) > Math.abs(sim.gust) ? 1 - Math.exp(-dt / 0.12) : 1 - Math.exp(-dt / 1.1);
+  sim.gust += (gustT - sim.gust) * k;
+  const lateral = sim.bias + sim.gust;
+  const target = [0, 1, 2].map(i => lerp(calm[i], sdir[i] * stormMag, smooth(0, 1, s)) + camR[i] * lateral);
+  target[1] = 0;
+  const kA = 1 - Math.exp(-dt / 1.1), kB = 1 - Math.exp(-dt / 0.4);
+  for (let i = 0; i < 3; i++) {
+    sim.windA[i] += (target[i] - sim.windA[i]) * kA;
+    sim.windB[i] += (target[i] - sim.windB[i]) * kB;
+    sim.dispA[i] += sim.windA[i] * dt;
+    sim.dispB[i] += sim.windB[i] * dt;
+  }
+  sim.cloud[0] += (sim.windA[0] * 3 + 3) * dt; sim.cloud[1] += (sim.windA[2] * 3 + 1) * dt;
+  // accumulation
+  if (!holdCoverage) sim.coverage = accumulate(sim.coverage, s, dt);
+  updateLighting(s);
+  // mouse segments -> uniforms
+  mouse.segs = mouse.segs.filter(m => sim.wall - m.t < 2.8);
+}
+
+function wrapDisp(L, a, b) {
+  // shift both displacement integrals by the same lattice vector of the layer's camera-aligned box
+  const S = [2 * L.hx, 2 * L.hy, L.z1 - L.z0];
+  const ax = [camR, camU, camF];
+  const sh = [0, 0, 0];
+  for (let j = 0; j < 3; j++) {
+    const c = a[0] * ax[j][0] + a[1] * ax[j][1] + a[2] * ax[j][2];
+    const n = Math.floor(c / S[j]) * S[j];
+    for (let i = 0; i < 3; i++) sh[i] += ax[j][i] * n;
+  }
+  return [[a[0] - sh[0], a[1] - sh[1], a[2] - sh[2]], [b[0] - sh[0], b[1] - sh[1], b[2] - sh[2]]];
+}
+
+function render() {
+  const W = R.W, H = R.H;
+  // ---- 1. progressive G-buffer (striped so no single frame stalls the GPU)
+  if (R.gbNext) {
+    const g = R.gbNext;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo);
+    gl.viewport(0, 0, g.w, g.h);
+    gl.enable(gl.SCISSOR_TEST);
+    const stripe = Math.ceil(g.h / 14);
+    gl.scissor(0, R.gbRow, g.w, stripe);
+    gl.useProgram(P.gbuf.p);
+    setCommon(P.gbuf.u, g.w, g.h);
+    gl.uniform1f(P.gbuf.u.uPixAng, 2 * TANH / g.h);
+    drawFull();
+    gl.disable(gl.SCISSOR_TEST);
+    R.gbRow += stripe;
+    if (R.gbRow >= g.h) { freeRT(R.gbCur); R.gbCur = g; R.gbNext = null; buildMs = performance.now() - buildStart; if (readyTime < 0) readyTime = sim.wall; }
+  }
+  if (!R.gbCur) { gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, W, H); gl.clearColor(0.80, 0.85, 0.90, 1); gl.clear(gl.COLOR_BUFFER_BIT); return; }
+  const G = R.gbCur;
+
+  // ---- 2. sky + clouds (half res, temporal accumulation)
+  const sp = R.sky[R.skyI], sc = R.sky[1 - R.skyI];
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sc.fbo);
+  gl.viewport(0, 0, sc.w, sc.h);
+  gl.useProgram(P.sky.p);
+  setCommon(P.sky.u, sc.w, sc.h);
+  bindTex(0, sp.texs[0], P.sky.u.uPrev);
+  gl.uniform1f(P.sky.u.uBlend, R.skyReset ? 1.0 : 0.3);
+  gl.uniform1f(P.sky.u.uFrame, frameNo % 64);
+  gl.uniform1f(P.sky.u.uSteps, quality > 0.7 ? 36 : 22);
+  drawFull();
+  R.skyReset = false; R.skyI = 1 - R.skyI;
+
+  // ---- 3. scene shading
+  gl.bindFramebuffer(gl.FRAMEBUFFER, R.scene.fbo);
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(P.shade.p);
+  setCommon(P.shade.u, W, H);
+  bindTex(0, G.texs[0], P.shade.u.uG0); bindTex(1, G.texs[1], P.shade.u.uG1); bindTex(2, G.texs[2], P.shade.u.uG2);
+  bindTex(3, sc.texs[0], P.shade.u.uSky);
+  gl.uniform3fv(P.shade.u.uGrassDisp, sim.dispA.map(v => v % 20000));
+  const wl = (sim.windA[0] * camR[0] + sim.windA[2] * camR[2]);
+  const fallS = 1.2 + 1.5 * sim.storm;
+  gl.uniform2f(P.shade.u.uVeilDir, wl / fallS, -1.0);
+  gl.uniform1f(P.shade.u.uVeilAmt, 0.012 + 0.18 * smooth(0, 1, sim.storm));
+  gl.uniform3f(P.shade.u.uSway, wl, 0, H * 0.5 / TANH);
+  gl.uniform1f(P.shade.u.uDebug, ({ flat: 1, shadow: 2, ao: 3, albedo: 4, normal: 5 })[DEBUG] || 0);
+  drawFull();
+
+  // ---- 4. FXAA -> hdr
+  gl.bindFramebuffer(gl.FRAMEBUFFER, R.hdr.fbo);
+  gl.useProgram(P.fxaa.p);
+  bindTex(0, R.scene.texs[0], P.fxaa.u.uTex);
+  gl.uniform2f(P.fxaa.u.uInv, 1 / W, 1 / H);
+  drawFull();
+
+  // ---- 5. snowflakes
+  if (DEBUG !== 'noflakes') {
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(P.flake.p);
+    const u = P.flake.u;
+    setCommon(u, W, H);
+    bindTex(0, G.texs[0], u.uG0);
+    gl.uniform1f(u.uAspect, W / H);
+    gl.uniform1f(u.uFocalPx, H * 0.5 / TANH);
+    gl.uniform1f(u.uExpo, lerp(1 / 140, 1 / 55, smooth(0, 1, sim.storm)));
+    gl.uniform1f(u.uCocK, 34 * H / 1080);
+    gl.uniform1f(u.uFocus, 1.9);
+    gl.uniform3fv(u.uWindA, sim.windA); gl.uniform3fv(u.uWindB, sim.windB);
+    gl.uniform1ui(u.uSeed, SEED);
+    const n = mouse.segs.length;
+    for (let i = 0; i < n; i++) { const m = mouse.segs[i]; msArr.set([m.x, m.y, m.dx, m.dy], i * 4); maArr[i] = sim.wall - m.t; }
+    gl.uniform4fv(u.uMs, msArr); gl.uniform1fv(u.uMa, maArr); gl.uniform1i(u.uMn, n);
+    const dens = amountMul() * (quality > 0.7 ? 1 : 0.7);
+    let total = 0;
+    for (const L of LAYERS) {
+      const cnt = Math.min(L.max, L.base * dens * (1 + (L.storm - 1) * sim.storm));
+      const ni = Math.ceil(cnt);
+      if (ni <= 0) continue;
+      const [dA, dB] = wrapDisp(L, sim.dispA, sim.dispB);
+      gl.uniform3fv(u.uDispA, dA); gl.uniform3fv(u.uDispB, dB);
+      gl.uniform1i(u.uLayer, L.id);
+      gl.uniform4f(u.uSlice, L.z0, L.z1, L.fade, 0);
+      gl.uniform2f(u.uHalfXY, L.hx, L.hy);
+      gl.uniform1f(u.uCount, cnt);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, ni);
+      total += ni;
+    }
+    sim.flakeCount = total;
+    gl.disable(gl.BLEND);
+  }
+
+  // ---- 6. bloom
+  gl.useProgram(P.down.p);
+  let src = R.hdr;
+  for (let i = 0; i < R.bloom.length; i++) {
+    const d = R.bloom[i];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, d.fbo); gl.viewport(0, 0, d.w, d.h);
+    bindTex(0, src.texs[0], P.down.u.uSrc);
+    gl.uniform2f(P.down.u.uSrcInv, 1 / src.w, 1 / src.h); gl.uniform2f(P.down.u.uDstRes, d.w, d.h);
+    gl.uniform1f(P.down.u.uThresh, i === 0 ? 1.15 : 0.0);
+    drawFull(); src = d;
+  }
+  gl.useProgram(P.up.p);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  for (let i = R.bloom.length - 1; i > 0; i--) {
+    const s = R.bloom[i], d = R.bloom[i - 1];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, d.fbo); gl.viewport(0, 0, d.w, d.h);
+    bindTex(0, s.texs[0], P.up.u.uSrc);
+    gl.uniform2f(P.up.u.uSrcInv, 1 / s.w, 1 / s.h); gl.uniform2f(P.up.u.uDstRes, d.w, d.h);
+    drawFull();
+  }
+  gl.disable(gl.BLEND);
+
+  // ---- 7. composite
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(P.comp.p);
+  bindTex(0, R.hdr.texs[0], P.comp.u.uHdr); bindTex(1, R.bloom[0].texs[0], P.comp.u.uBloom);
+  gl.uniform2f(P.comp.u.uRes, W, H);
+  gl.uniform1f(P.comp.u.uExposure, lerp(1.0, 0.64, Math.pow(sim.coverage, 1.3)) * lerp(1.0, 1.05, sim.storm));
+  gl.uniform1f(P.comp.u.uBloomStr, 0.12);
+  gl.uniform1f(P.comp.u.uFade, readyTime >= 0 ? smooth(0, 1.2, sim.wall - readyTime) : 0);
+  gl.uniform1f(P.comp.u.uFrame, frameNo);
+  gl.uniform1f(P.comp.u.uStorm, sim.storm);
+  drawFull();
+}
+
+function updateUI() {
+  const wx = (sim.windA[0] + sim.windB[0]) / 2, wz = (sim.windA[2] + sim.windB[2]) / 2;
+  const lat = wx * camR[0] + wz * camR[2], fwd = wx * camF[0] + wz * camF[2];
+  const spd = Math.hypot(wx, wz);
+  if (frameNo % 6 === 0) {
+    elWindV.textContent = spd.toFixed(1) + ' m/s';
+    elArrow.style.transform = `rotate(${(-Math.atan2(fwd, lat) * 180 / Math.PI).toFixed(1)}deg)`;
+  }
+  if (readyTime >= 0 && SHOW_UI) {
+    const since = sim.wall - readyTime;
+    hint.classList.toggle('on', since > 0.8 && since < 6.5);
+  }
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now() / 1000;
+  let dt = now - lastNow; lastNow = now;
+  dt = clamp(dt, 0, 0.1);           // clamp tab switches / stalls
+  if (dt > 0) { sim.fps = lerp(sim.fps, 1 / Math.max(dt, 1e-3), 0.05); }
+  // adaptive quality: sustained < 45 fps for 3 s after the scene is ready -> lighter settings
+  if (readyTime >= 0 && sim.wall - readyTime > 3) {
+    if (sim.fps < 45) lowT += dt; else lowT = Math.max(0, lowT - dt * 0.5);
+    if (lowT > 3 && quality > 0.6) { quality = 0.6; lowT = 0; }
+  }
+  update(dt);
+  render();
+  updateUI();
+  frameNo++;
+}
+allocate();
+updateLighting(stormAt(sim.time));
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

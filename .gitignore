@@ -1,0 +1,4 @@
+.DS_Store
+# scratch space: stage backups, per-lane copies, verification screenshots
+work/
+**/shots/

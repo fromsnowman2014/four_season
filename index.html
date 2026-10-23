@@ -1,0 +1,2349 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>눈 내리는 들판</title>
+<style>
+  :root { --line: rgba(255,255,255,0.22); --ink: rgba(255,255,255,0.96); --ink2: rgba(255,255,255,0.80); }
+  /* body colour = the composite's fade base (0.80, 0.85, 0.90), so the pre-script page, the first GL frame and the reveal all start from one colour */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: rgb(204,217,230); user-select: none; -webkit-user-select: none;
+               font: 500 12.5px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
+  canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
+  /* The only chrome: a soft snowflake glyph in the corner. A dark halo keeps it readable over snow (it is a white
+     flake among white flakes); it dims once the pointer rests (never below 0.25), brightens on hover / open, and
+     lifts once for two seconds when the hint fades so a first-time viewer notices the corner. */
+  #icon { position: fixed; right: 22px; bottom: 20px; width: 28px; height: 28px; padding: 8px; margin: -8px; cursor: pointer;
+          opacity: 0.5; transition: opacity 0.9s ease; -webkit-tap-highlight-color: transparent; outline: none; }
+  #icon svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 2.5px rgba(0,25,50,0.75)) drop-shadow(0 1px 2px rgba(0,20,40,0.5)); }
+  #icon.idle { opacity: 0.25; }
+  #icon.lift { opacity: 0.9; transition-duration: 0.6s; }
+  #icon:hover, #icon.open, #icon:focus-visible { opacity: 0.85; transition-duration: 0.25s; }
+  /* glass pop-over anchored above the icon: a cool dark frosted glass, so white ink keeps >= 4.5:1 over snow */
+  #pop { position: fixed; right: 22px; bottom: 62px; width: 240px; box-sizing: border-box; padding: 14px 16px 13px; border-radius: 16px;
+         background: linear-gradient(160deg, rgba(16,32,58,0.76), rgba(16,32,58,0.68));
+         border: 1px solid var(--line); box-shadow: 0 10px 32px rgba(20,40,70,0.28), inset 0 1px 0 rgba(255,255,255,0.14);
+         -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+         color: var(--ink); letter-spacing: 0.01em; text-shadow: 0 1px 2px rgba(0,20,40,0.35); user-select: none;
+         opacity: 0; transform: translateY(6px) scale(0.98); transform-origin: 100% 100%; pointer-events: none; visibility: hidden;
+         transition: opacity 0.25s ease, transform 0.25s ease, visibility 0s linear 0.25s; }
+  #pop.open { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+  /* one focus ring that belongs to the glass, instead of Chrome's black outline */
+  #pop :focus-visible, #icon:focus-visible, .toggle input:focus-visible + .sw { outline: 1.5px solid rgba(255,255,255,0.85); outline-offset: 2px; }
+  #icon:focus-visible { outline-offset: -4px; border-radius: 50%; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 9px; }
+  /* two-tone track (filled part white, rest a dark groove) so the control's range reads on snow and on meadow; --p is set from JS */
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 3px; border-radius: 2px; margin: 5px 0 0; cursor: pointer;
+                      background: linear-gradient(90deg, rgba(255,255,255,0.88) var(--p, 50%), rgba(0,20,40,0.45) var(--p, 50%)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.12); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,30,60,0.35); cursor: pointer; }
+  .col { display: block; margin: 0 0 12px; }
+  .col span { display: flex; justify-content: space-between; color: var(--ink); }
+  .col span i { font-style: normal; color: var(--ink2); font-variant-numeric: tabular-nums; }
+  button { width: 100%; padding: 7px 0; margin: 0 0 8px; border-radius: 9px; border: 1px solid var(--line);
+           background: rgba(255,255,255,0.10); color: var(--ink); font: inherit; text-shadow: inherit; cursor: pointer; transition: background .2s; }
+  button:hover { background: rgba(255,255,255,0.18); }
+  button:active { background: rgba(255,255,255,0.26); }
+  button.busy { background: rgba(140,200,255,0.25); cursor: default; }
+  button.last { margin-bottom: 0; }
+  .toggle { cursor: pointer; margin: 2px 0 10px; }
+  .sw { position: relative; width: 30px; height: 17px; border-radius: 9px; background: rgba(255,255,255,0.25); transition: background .2s; flex: none; }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,30,60,0.3); }
+  .toggle input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); pointer-events: none; }   /* visually hidden, still keyboard-reachable */
+  .toggle input:checked + .sw { background: rgba(140,200,255,0.65); }
+  .toggle input:checked + .sw::after { transform: translateX(13px); }
+  #hint { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
+          background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
+          -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+          color: rgba(255,255,255,0.95); font-size: 14px; line-height: 1.2; letter-spacing: 0; text-shadow: 0 1px 3px rgba(0,20,40,0.4);
+          pointer-events: none; opacity: 0; transition: opacity 1.4s ease; white-space: nowrap; }
+  #hint.on { opacity: 1; }
+  #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 20px; pointer-events: none; }
+  #err span { padding: 12px 20px; border-radius: 14px; background: rgba(255,255,255,0.75); color: #234; font-size: 15px; line-height: 1.6; text-align: center;
+              -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(20,40,70,0.2); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="icon" role="button" aria-label="눈 설정" tabindex="0" aria-haspopup="dialog" aria-expanded="false">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+    <g><path d="M12 2.6v18.8M9.9 4.7 12 6.8l2.1-2.1M9.9 19.3 12 17.2l2.1 2.1M10.4 8.5 12 10.1l1.6-1.6M10.4 15.5 12 13.9l1.6 1.6"/></g>
+    <g transform="rotate(60 12 12)"><path d="M12 2.6v18.8M9.9 4.7 12 6.8l2.1-2.1M9.9 19.3 12 17.2l2.1 2.1M10.4 8.5 12 10.1l1.6-1.6M10.4 15.5 12 13.9l1.6 1.6"/></g>
+    <g transform="rotate(120 12 12)"><path d="M12 2.6v18.8M9.9 4.7 12 6.8l2.1-2.1M9.9 19.3 12 17.2l2.1 2.1M10.4 8.5 12 10.1l1.6-1.6M10.4 15.5 12 13.9l1.6 1.6"/></g>
+  </svg>
+</div>
+<div id="pop" role="dialog" aria-label="눈 설정">
+  <label class="col"><span>눈의 양 <i id="amountv">50%</i></span><input type="range" id="amount" min="0" max="1" step="0.01" value="0.5"></label>
+  <button id="blizzard">폭설 일으키기</button>
+  <label class="row toggle"><span>자동 폭설</span><input type="checkbox" id="auto" checked><span class="sw"></span></label>
+  <button id="reset" class="last">쌓인 눈 초기화</button>
+</div>
+<div id="hint">마우스를 움직여 바람을 일으켜 보세요</div>
+<div id="err"><span></span></div>
+
+<script>
+'use strict';
+// =====================================================================================
+//  Snow over an alpine meadow — raw WebGL2.
+//  Pipeline (static camera):
+//   1. G-buffer: a one-time, progressive (striped) iq-style raymarch of the heightfield
+//      terrain + SDF conifers + chalets. Stores distance, material, sun shadow, AO,
+//      albedo, snow-threshold and two normals. Because the camera never moves this is
+//      the ultimate temporal reuse: geometry is marched once, shading runs every frame.
+//   2. Cloud pass (half res, temporally accumulated volumetric cumulus slab). Stores premultiplied
+//      cloud light + transmittance and an opacity-weighted cloud distance; the analytic sky is
+//      evaluated in the shading pass so clouds can be composited over the sky or the far peaks.
+//   3. Scene shading: snow coverage, storm lighting, cloud shadows, fog, veil.
+//   4. FXAA on the scene, 5. instanced stateless snowflakes (4 depth layers, soft
+//      occlusion against the G-buffer distance), 6. bloom, 7. ACES composite + grade.
+//   Steps 2-6 run at an adaptive render scale (frame-time controller, down to 0.6 and back up); the G-buffer
+//   stays at canvas size (DPR capped at 1.25, ~8.4 Mpx) and the composite upsamples.
+//   A resize bakes a second G-buffer in time-budgeted stripes while the old one is still shown (aspect-corrected),
+//   and the new rows wipe in from the bottom; the first load uses the same wipe as its progress reveal.
+// =====================================================================================
+
+const Q = new URLSearchParams(location.search);
+const qNum = (k, d) => { const v = Q.get(k); if (v === null || v === '') return d; const n = parseFloat(v); return isFinite(n) ? n : d; };
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const SEED = Math.floor(qNum('seed', 1)) >>> 0;
+const T0 = Math.max(0, qNum('t', 0));
+const COVER_Q = Q.has('cover') ? clamp(qNum('cover', 0), 0, 1) : null;
+const STORM_Q = Q.get('storm');
+const WIND_Q = (Q.get('wind') || '').split(',').map(Number);
+const SHOW_UI = Q.get('ui') !== '0';
+// ?fixed=1: a fixed 1/60 s simulation step (and a grain clock derived from it) instead of the wall clock, so
+// ?t&seed captures are reproducible frame for frame; the quality controller is off in this mode
+const FIXED = Q.get('fixed') === '1';
+
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl2', { antialias: false, depth: false, stencil: false, alpha: false, premultipliedAlpha: false, powerPreference: 'high-performance' });
+const errEl = document.getElementById('err');
+function showErr(msg) { errEl.style.display = 'flex'; errEl.firstElementChild.textContent = msg; }
+function hideErr() { errEl.style.display = 'none'; }
+function fatal(msg) { showErr(msg); throw new Error(msg); }
+if (!gl) fatal('WebGL2를 지원하지 않는 브라우저입니다.');
+// extension objects die with the context, so they are (re)requested in initGL()
+function getExtensions() {
+  if (!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'))) fatal('부동소수점 렌더 타깃(EXT_color_buffer_float)을 지원하지 않습니다.');
+  gl.getExtension('OES_texture_float_linear');
+}
+
+// ------------------------------------------------------------------ camera & sun
+// high vantage over the meadow: ~230 m above the chalet basin, tilted 12 deg down (horizon sits at ~24% from the top)
+const CAM = { pos: [0, 132, 0], yaw: 0.0, pitch: -12 * Math.PI / 180, fovY: 44 * Math.PI / 180 };
+const camF = [Math.sin(CAM.yaw) * Math.cos(CAM.pitch), Math.sin(CAM.pitch), Math.cos(CAM.yaw) * Math.cos(CAM.pitch)];
+const camR = (() => { const r = [camF[2], 0, -camF[0]]; const l = Math.hypot(r[0], r[2]); return [r[0] / l, 0, r[2] / l]; })();
+const camU = [camF[1] * camR[2] - camF[2] * camR[1], camF[2] * camR[0] - camF[0] * camR[2], camF[0] * camR[1] - camF[1] * camR[0]];  // F x R = up
+const TANH = Math.tan(CAM.fovY / 2);
+const SUN = (() => { const s = [-0.70, 0.47, -0.17]; const l = Math.hypot(...s); return s.map(v => v / l); })();
+
+// =====================================================================================
+//                                    GLSL
+// =====================================================================================
+const COMMON = `
+precision highp float; precision highp int; precision highp sampler2D;
+uniform vec2 uRes;
+uniform vec3 uCamPos, uCamR, uCamU, uCamF;
+uniform float uTanH;
+uniform vec3 uSunDir;
+uniform float uTime, uStorm, uStormSky, uCover;   // uStorm: the snow curtain; uStormSky: the overcast / wind front that leads and outlasts it
+uniform vec3 uSunCol, uSkyAmb, uSkyZen, uSkyHor, uFogCol;
+uniform vec4 uFogP;      // x haze density, y haze scale height, z storm extinction, w valley-mist density
+uniform vec2 uCloudOff;
+uniform float uCloudCov;
+uniform sampler2D uNoise;
+
+vec3 camRay(vec2 frag) {
+  vec2 ndc = frag / uRes * 2.0 - 1.0;
+  return normalize(uCamF + uCamR * (ndc.x * uTanH * uRes.x / uRes.y) + uCamU * (ndc.y * uTanH));
+}
+uint hu(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
+float hf(uint x) { return float(hu(x)) * (1.0 / 4294967296.0); }
+float hash2(vec2 p) { ivec2 i = ivec2(floor(p)); return hf(uint(i.x) * 0x27d4eb2du ^ hu(uint(i.y) + 0x165667b1u)); }
+float sat(float x) { return clamp(x, 0.0, 1.0); }
+float sq(float x) { return x * x; }
+
+// Texture value noise (cheap, per-frame use). Texel (x,y): G = A(x,y), R = A(x+37,y+17),
+// which turns one bilinear fetch into a 3D noise lookup (iq's trick).
+float tnoise(vec2 x) { vec2 p = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f); return textureLod(uNoise, (p + f + 0.5) / 256.0, 0.0).g; }
+float tnoise3(vec3 x) {
+  vec3 p = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  vec2 uv = p.xy + vec2(37.0, 17.0) * p.z + f.xy;
+  vec2 rg = textureLod(uNoise, (uv + 0.5) / 256.0, 0.0).gr;
+  return mix(rg.x, rg.y, f.z);
+}
+
+// Sky radiance (analytic): Rayleigh-ish zenith/horizon gradient + Mie halo around the sun,
+// plus a thin, streaky cirrus veil high up (a 2D noise sheet at ~9 km).
+vec3 skyColor(vec3 rd) {
+  float mu = dot(rd, uSunDir);
+  float y = clamp(rd.y, 0.0, 1.0);
+  vec3 c = mix(uSkyHor, uSkyZen, pow(y + 0.015, 0.5));
+  c = mix(c, mix(uSkyHor, vec3(0.70, 0.76, 0.86), 0.5), exp(-max(rd.y, 0.0) * 30.0) * 0.5);   // pale haze band at the horizon
+  if (rd.y > 0.0) {
+    // dome projection (rd.y + 0.35) instead of a flat 9 km sheet: the visible sky only spans rd.y 0.02-0.17,
+    // where a plane is foreshortened ~50:1 into horizontal scanlines; the dome keeps the wisps ~2:1
+    vec2 q = rd.xz / (rd.y + 0.35) * 2500.0 + uCloudOff * 0.12;
+    float v = tnoise(q * 0.0007 + 2.0) * 0.5 + tnoise(q * 0.0017 + 7.0) * 0.3 + tnoise(q * 0.0041 + 4.0) * 0.2;
+    float cir = smoothstep(0.52, 0.8, v) * (0.10 - 0.05 * uStormSky) * smoothstep(0.015, 0.09, rd.y);
+    c = mix(c, vec3(0.9, 0.93, 0.98) * dot(uSunCol, vec3(0.11)), cir);
+  }
+  float s = max(mu, 0.0);
+  c += uSunCol * (0.018 * pow(s, 3.0) + 0.05 * pow(s, 24.0) + 0.9 * pow(s, 1200.0));
+  return c;
+}
+// storm stratus deck: brightness modulation (about -0.45..+0.3) of the overcast underside, projected on a low
+// dome: a slow ragged base sheet, a fast low scud layer racing under it (the deck visibly moves), and a
+// zenith-to-horizon gradient (the deck is darkest overhead, the horizon is lit by the snow below). Applied to
+// the whiteout itself too (the snow curtain is lit by the deck above it), so the storm sky keeps cloud
+// structure instead of collapsing into one flat grey field
+float stratus(vec3 rd) {
+  float y = max(rd.y, 0.0);
+  vec2 q = rd.xz / (y + 0.15) * 2.0 + uCloudOff * 0.0004 + vec2(uTime * 0.01, 0.0);
+  float st = tnoise(q) * 0.5 + tnoise(q * 2.3 + 3.0) * 0.3 + tnoise(q * 5.1 + 7.0) * 0.2;
+  vec2 q2 = rd.xz / (y + 0.08) * 3.0 + uCloudOff * 0.0012 + vec2(uTime * 0.05, uTime * 0.01);
+  float sc = tnoise(q2 + 11.0) * 0.6 + tnoise(q2 * 2.1 + 5.0) * 0.4;
+  float m = 0.8 * (st - 0.5) + 0.4 * (sc - 0.5) - 0.18 * smoothstep(0.0, 0.25, y);
+  return m * smoothstep(-0.03, 0.1, rd.y);
+}
+
+// Cumulus slab (world altitude). It sits just above the camera so clouds drift around the peaks.
+const float CB = 1500.0, CT = 3600.0;
+// Large-scale cloud placement ("weather map"), shared by clouds and their ground shadows.
+float weather(vec2 q) { return tnoise(q * 0.00016 + vec2(3.1, 7.7)) * 0.62 + tnoise(q * 0.00047 + vec2(9.0, 1.3)) * 0.38; }
+float cloudShadow(vec3 p) {
+  vec2 q = p.xz + uSunDir.xz / uSunDir.y * (0.5 * (CB + CT) - p.y) + uCloudOff;
+  // the overhead cumulus (out of frame) is smaller-celled than the far field, so the dapple has ~1 km lobes
+  float w = weather(q) * 0.4 + tnoise(q * 0.0012 + 2.0) * 0.35 + tnoise(q * 0.0031 + 7.0) * 0.25;
+  float shape = sat((w - (1.0 - uCloudCov)) / max(uCloudCov, 0.05));
+  shape += 0.16 * (tnoise(q * 0.0075 + 5.0) - 0.5);          // ragged edges that follow the cloud detail
+  return 1.0 - 0.65 * smoothstep(0.06, 0.28, shape) * (1.0 - 0.7 * uStormSky);
+}
+
+// Aerial perspective: analytic integral of an exponential-height haze, a shallow dense
+// valley-mist layer and a uniform storm whiteout. Returns inscatter (rgb) and transmittance (a).
+vec4 fogAtM(float t, vec3 rd, float mistMod) {
+  float y0 = uCamPos.y;
+  float ry = abs(rd.y) < 1e-4 ? 1e-4 : rd.y;
+  float k = 1.0 / uFogP.y;
+  float odH = uFogP.x * exp(-y0 * k) * (1.0 - exp(clamp(-ry * t * k, -30.0, 30.0))) / (ry * k);
+  float km = 1.0 / 260.0;
+  float odM = uFogP.w * exp(-(y0 + 650.0) * km) * (1.0 - exp(clamp(-ry * t * km, -30.0, 30.0))) / (ry * km);
+  float odS = uFogP.z * t;
+  odH = max(odH, 0.0); odM = max(odM, 0.0) * mistMod;
+  float od = odH + odM + odS;
+  float T = exp(-od);
+  float mu = max(dot(rd, uSunDir), 0.0);
+  vec3 cH = uFogCol + uSunCol * (0.03 * pow(mu, 6.0));
+  vec3 cM = mix(uFogCol, vec3(dot(uFogCol, vec3(0.33))), 0.35) * 1.02 + uSunCol * 0.012;
+  vec3 cS = uFogCol;
+  vec3 c = (cH * odH + cM * odM + cS * odS) / max(od, 1e-6);
+  return vec4(c * (1.0 - T), T);
+}
+vec4 fogAt(float t, vec3 rd) { return fogAtM(t, rd, 1.0); }
+// drifting valley mist banks: density modulation sampled at the hit (or 6 km out), continuous across the horizon
+float mistBanks(vec3 rd, float t) {
+  float tl = min(t, 6000.0);
+  vec3 p = uCamPos + rd * tl;
+  vec2 q = p.xz * 0.00045 + vec2(uTime * 0.004, uTime * 0.0015) + uCloudOff * 0.00002;
+  float n = tnoise(q) * 0.55 + tnoise(q * 2.3 + 4.1) * 0.3 + tnoise(q * 4.7 + 9.0) * 0.15;   // 2.2 km / 1 km / 470 m bands
+  return 0.3 + 1.3 * smoothstep(0.35, 0.8, n);
+}
+vec2 octEnc(vec3 n) {
+  vec3 v = n / (abs(n.x) + abs(n.y) + abs(n.z));
+  vec2 e = v.xz;
+  if (v.y < 0.0) e = (1.0 - abs(e.yx)) * vec2(e.x >= 0.0 ? 1.0 : -1.0, e.y >= 0.0 ? 1.0 : -1.0);
+  return e;
+}
+vec3 octDec(vec2 e) {
+  vec3 v = vec3(e.x, 1.0 - abs(e.x) - abs(e.y), e.y);
+  float t = max(-v.y, 0.0);
+  v.x += v.x >= 0.0 ? -t : t; v.z += v.z >= 0.0 ? -t : t;
+  return normalize(v);
+}
+`;
+
+const VS_FULL = `#version 300 es
+void main() { vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2); gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0); }`;
+
+// G-buffer reads for the per-frame passes. While a resize rebakes, two buffers exist: uG* (the current one, baked
+// for the previous canvas) and uN* (the next, striped in from the bottom row up). The vertical FOV is fixed, so a
+// pixel of the old buffer still holds the right ray once u is rescaled by the aspect ratio change (uGb.x; columns
+// beyond the old frame clamp to its edge); rows already baked read the new buffer, so the new frame wipes up over
+// the old one and the final swap changes nothing. On the first load (uGb.z = 2) there is no old buffer: unbaked rows
+// read as sky and the composite hides them behind the reveal edge.
+//   uGb: x = new/old aspect, y = baked fraction of the next buffer (from the bottom), z = 0 one buffer, 1 both, 2 next only
+// The no-bake case (almost every frame) is one textureLod behind a uniform branch: explicit LOD, so no implicit
+// derivatives force the compiler to flatten the bake-only branches into extra fetches
+const GBUF = `
+uniform sampler2D uG0, uG1, uG2, uN0, uN1, uN2;
+uniform vec3 uGb;
+vec4 gbMix(vec4 nxt, vec4 cur, vec4 none, vec2 uv) { return uv.y < uGb.y ? nxt : (uGb.z > 1.5 ? none : cur); }
+vec2 gbUV(vec2 uv) { return vec2(0.5 + (uv.x - 0.5) * uGb.x, uv.y); }
+vec4 G0(vec2 uv) { if (uGb.z < 0.5) return textureLod(uG0, uv, 0.0); return gbMix(textureLod(uN0, uv, 0.0), textureLod(uG0, gbUV(uv), 0.0), vec4(65000.0, 0.0, 1.0, 1.0), uv); }
+vec4 G1(vec2 uv) { if (uGb.z < 0.5) return textureLod(uG1, uv, 0.0); return gbMix(textureLod(uN1, uv, 0.0), textureLod(uG1, gbUV(uv), 0.0), vec4(0.0), uv); }
+vec4 G2(vec2 uv) { if (uGb.z < 0.5) return textureLod(uG2, uv, 0.0); return gbMix(textureLod(uN2, uv, 0.0), textureLod(uG2, gbUV(uv), 0.0), vec4(0.0), uv); }
+`;
+
+// ------------------------------------------------------------------ G-buffer raymarch
+const FS_GBUF = `#version 300 es
+${COMMON}
+uniform float uPixAng;
+uniform int uIter;                  // state-machine iteration cap (a uniform bound: the driver cannot unroll the loop)
+layout(location = 0) out vec4 o0;   // t, material(+grass frac), sun shadow, AO
+layout(location = 1) out vec4 o1;   // albedo, snow threshold
+layout(location = 2) out vec4 o2;   // oct(detail normal), oct(smooth normal)
+
+const mat2 M2 = mat2(0.8, 0.6, -0.6, 0.8);
+const float TMAX = 42000.0;
+const float HMAX = 4400.0;
+
+// value noise in [-1,1] (quintic) and with analytic derivatives
+float vn(vec2 x) {
+  vec2 i = floor(x), f = x - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  float a = hash2(i), b = hash2(i + vec2(1, 0)), c = hash2(i + vec2(0, 1)), d = hash2(i + vec2(1, 1));
+  return -1.0 + 2.0 * (a + (b - a) * u.x + (c - a) * u.y + (a - b - c + d) * u.x * u.y);
+}
+vec3 vnd(vec2 x) {
+  vec2 i = floor(x), f = x - i;
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  vec2 du = 30.0 * f * f * (f * (f - 2.0) + 1.0);
+  float a = hash2(i), b = hash2(i + vec2(1, 0)), c = hash2(i + vec2(0, 1)), d = hash2(i + vec2(1, 1));
+  float k1 = b - a, k2 = c - a, k4 = a - b - c + d;
+  return vec3(-1.0 + 2.0 * (a + k1 * u.x + k2 * u.y + k4 * u.x * u.y), 2.0 * du * vec2(k1 + k4 * u.y, k2 + k4 * u.x));
+}
+// 3D value noise (for rock detail on steep faces, where heightfield noise would be stretched)
+float hash3(vec3 p) { ivec3 i = ivec3(floor(p)); return hf(uint(i.x) * 0x27d4eb2du ^ hu(uint(i.y) * 0x165667b1u ^ hu(uint(i.z) + 0x9e3779b9u))); }
+float vn3(vec3 x) {
+  vec3 i = floor(x), f = x - i;
+  vec3 u = f * f * (3.0 - 2.0 * f);
+  float a = mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), u.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), u.x), u.y);
+  float b = mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), u.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), u.x), u.y);
+  return mix(a, b, u.z) * 2.0 - 1.0;
+}
+float fbm3(vec3 p, float oct) {
+  float a = 0.0, b = 0.5;
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    a += b * vn3(p) * clamp(oct - fi, 0.0, 1.0);
+    b *= 0.5; p = p * 2.03 + vec3(1.7, -3.1, 2.3);
+  }
+  return a;
+}
+// 3D bump: perturb the normal by the surface-projected gradient of a 3D fbm (ridged-ish rock)
+vec3 rockBump(vec3 p, vec3 n, float fp, float amp) {
+  float sc = 70.0;
+  float oct = clamp(log2(sc / max(1.5 * fp, 0.2)), 0.0, 7.0);
+  float e = max(fp * 0.7, 0.3);
+  vec3 q = p / sc;
+  float c = abs(fbm3(q, oct));
+  vec3 g = vec3(abs(fbm3(q + vec3(e / sc, 0, 0), oct)) - c, abs(fbm3(q + vec3(0, e / sc, 0), oct)) - c, abs(fbm3(q + vec3(0, 0, e / sc), oct)) - c) / e;
+  g -= dot(g, n) * n;
+  return normalize(n - amp * sc * g);
+}
+
+// fbm with a fractional octave count (smooth LOD by pixel footprint -> no seams)
+float fbmF(vec2 p, float oct) {
+  float a = 0.0, b = 0.5;
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    a += b * vn(p) * clamp(oct - fi, 0.0, 1.0);
+    b *= 0.5; p = M2 * p * 2.03 + 1.7;
+  }
+  return a;
+}
+// iq "erosion" fbm: each octave is damped by the accumulated slope, n/(1+|grad|^2),
+// so detail collects in gullies and ridges stay sharp -> eroded mountain look.
+float erodedFbm(vec2 p, float oct) {
+  float a = 0.0, b = 0.5; vec2 d = vec2(0.0);
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    float w = clamp(oct - fi, 0.0, 1.0);
+    vec3 n = vnd(p);
+    d += n.yz * w;
+    a += b * w * n.x / (1.0 + dot(d, d));
+    b *= 0.5; p = M2 * p * 2.0;
+  }
+  return a;
+}
+// ridged multifractal (sharp crests), weights feed back between octaves
+float ridgedFbm(vec2 p, float oct) {
+  float a = 0.0, b = 0.5, w = 1.0;
+  for (int i = 0; i < 10; i++) {
+    float fi = float(i); if (fi >= oct) break;
+    float f = clamp(oct - fi, 0.0, 1.0);
+    float n = 1.0 - abs(vn(p)); n *= n;
+    a += b * n * w * f;
+    w = clamp(n * 1.7, 0.0, 1.0);
+    b *= 0.5; p = M2 * p * 2.07 + 11.7;
+  }
+  return a;
+}
+float softplus(float x, float k) { return k * log(1.0 + exp(clamp(x / k, -40.0, 40.0))); }
+
+// ---- scene layout (metres; camera at the origin looking +z, +x is screen-right). Staged after the
+// reference photo: a high vantage over a chalet meadow, the great wall on the right seen at a grazing
+// angle (its foot nearest at the right edge, receding to the far centre), the glacial valley far-left.
+// Two dirt paths: path 1 winds away from the viewer up through the chalets, path 2 branches off at
+// the junction (z = PJ) toward the lower right.
+float path1X(float z) { return 20.0 + 70.0 * sin(z * 0.0044 + 0.8) + 26.0 * sin(z * 0.0127 + 2.0) - 0.05 * z; }
+float path1dX(float z) { return 0.308 * cos(z * 0.0044 + 0.8) + 0.330 * cos(z * 0.0127 + 2.0) - 0.05; }
+const float PJ = 700.0;
+float path2Z(float x) { float u = x - path1X(PJ); return PJ - 0.5 * u + 55.0 * sin(u * 0.011 + 0.3) * smoothstep(0.0, 60.0, u); }
+float path2dZ(float x) { float u = x - path1X(PJ); return -0.5 + 0.605 * cos(u * 0.011 + 0.3) * smoothstep(0.0, 60.0, u); }
+// distance to the nearest path (grows past their ends so the masks fade out)
+float pathDist(vec2 p) {
+  float d1 = abs(p.x - path1X(p.y)) / sqrt(1.0 + sq(path1dX(p.y))) + 40.0 * smoothstep(2300.0, 2700.0, p.y);
+  float u = p.x - path1X(PJ);
+  float d2 = abs(p.y - path2Z(p.x)) / sqrt(1.0 + sq(path2dZ(p.x))) + 40.0 * smoothstep(0.0, -30.0, u);
+  return min(d1, d2);
+}
+const vec2 WP = vec2(1600.0, 2400.0);     // nearest point of the wall's foot (just off the right edge)
+const vec2 WD = vec2(-0.414, 0.910);      // unit direction along the foot, receding to the far centre
+const vec2 WN = vec2(0.910, 0.414);       // unit direction into the wall (perpendicular to the foot)
+float valleyAxis(float z) { return -1500.0 - 0.2 * z + 260.0 * sin(z * 0.00041 + 0.4); }
+
+// macro weights used by both height and material. across/along: wall-frame coordinates (m);
+// footD: signed distance from the (wavy) foot of the rock face, positive up the face
+void layoutW(vec2 w, out float mtnW, out float valW, out float wallW, out float across, out float along, out float footD) {
+  float x = w.x, z = w.y;
+  vec2 r = w - WP;
+  along = dot(r, WD); across = dot(r, WN);
+  // the foot line waves at two scales so the face is ribbed with buttresses all the way down, not a flat ramp
+  float ac = across + 260.0 * vn(vec2(along * 0.0009, 0.5)) + 110.0 * vn(vec2(along * 0.0031, across * 0.0006) + 3.0);
+  footD = ac + 150.0;
+  wallW = smoothstep(-150.0, 1250.0, ac) * smoothstep(-3800.0, -2200.0, along) * smoothstep(14500.0, 11000.0, along);
+  vec2 lp = (w - vec2(-6000.0, 16500.0)) / vec2(3600.0, 2800.0);  // left snowy massif
+  float left = exp(-dot(lp, lp) * 1.2);
+  float back = smoothstep(14000.0, 20000.0, z) * 0.75;             // distant range closing the valley
+  mtnW = clamp(max(wallW, max(left, back)), 0.0, 1.0);
+  float dv = (x - valleyAxis(z)) / 1450.0;
+  valW = exp(-dv * dv) * smoothstep(400.0, 2600.0, z - 0.3 * (x + 1700.0)) * (1.0 - mtnW * 0.85);
+}
+float gauss2(vec2 d) { return exp(-dot(d, d)); }
+
+float terrainH(vec2 p, float fp) {
+  // gentle domain warp keeps the macro shapes organic
+  vec2 w = p + 180.0 * vec2(vn(p * 0.00033 + vec2(4.1, 0.3)), vn(p * 0.00033 + vec2(-2.3, 6.1)));
+  float x = w.x, z = w.y;
+  float mtnW, valW, wallW, across, along, footD; layoutW(w, mtnW, valW, wallW, across, along, footD);
+
+  // --- meadow: the hillside under the viewpoint drops into the chalet basin; a few knolls
+  float h = 40.0 - 140.0 * smoothstep(-150.0, 700.0, z);
+  h += 70.0 * gauss2((w - vec2(380.0, 1300.0)) / 420.0) + 50.0 * gauss2((w - vec2(-80.0, 1950.0)) / 520.0) + 35.0 * gauss2((w - vec2(430.0, 520.0)) / 260.0);
+  // --- the pasture flank climbing to the wall's foot on the near (right) part of the wall ...
+  float nearW = smoothstep(4200.0, 1200.0, along);
+  h += 0.21 * softplus(across + 1500.0, 450.0) * nearW * (1.0 - valW);
+  // ... while further along, the ground falls away into the valley so the far wall rises from low down
+  h -= 550.0 * smoothstep(1200.0, 4200.0, along) * smoothstep(-2200.0, -300.0, across);
+  // terraces (benches) and ribs/gullies running down the flank's fall line
+  float flankM = smoothstep(-1700.0, -500.0, across) * (1.0 - smoothstep(-250.0, 150.0, across)) * nearW;
+  float tz = across / 150.0 + 0.7 * vn(vec2(along * 0.004, 1.0)); float tf = fract(tz);
+  h += 18.0 * (smoothstep(0.35, 0.65, tf) - tf) * flankM * (0.6 + 0.4 * vn(w * 0.0015 + 2.0));
+  float og = clamp(log2(400.0 / max(2.2 * fp, 0.5)), 0.0, 6.0);
+  h += 80.0 * erodedFbm(vec2(along / 230.0, across / 700.0) + vec2(8.3, 2.1), og) * flankM;
+  // --- valley trough on the left
+  h -= 1000.0 * valW;
+  // --- mountains
+  if (mtnW > 0.002) {
+    float oct = clamp(log2(2800.0 / max(2.2 * fp, 0.5)), 1.0, 11.0);
+    vec2 q = w / 2800.0;
+    float e = erodedFbm(q + vec2(3.1, 1.7), oct);
+    float r = ridgedFbm(q * 1.25 + vec2(-4.2, 9.1), oct - 1.0);
+    // the wall lowers as it recedes; the left massif is a little taller than the wall's near end
+    vec2 lp = (w - vec2(-6000.0, 16500.0)) / vec2(3600.0, 2800.0);
+    float left = exp(-dot(lp, lp) * 1.2), back = smoothstep(14000.0, 20000.0, z) * 0.75;
+    float ws = mix(1.0, 0.55, smoothstep(0.0, 7000.0, along));
+    float hs = (wallW * ws + left * 1.05 + back * 0.65) / max(wallW + left + back, 1e-3);
+    float m = (1700.0 + 1300.0 * e + 1100.0 * r) * hs;
+    vec2 lp2 = (w - vec2(-6300.0, 16800.0)) / vec2(2400.0, 2000.0);
+    m += 700.0 * exp(-dot(lp2, lp2));                               // the left massif towers higher
+    // couloirs & buttresses: ridged noise stretched along the fall line (z), narrow across (x)
+    float oc = clamp(log2(260.0 / max(2.2 * fp, 0.5)), 0.0, 6.0);
+    float cg = ridgedFbm(vec2(w.x / 210.0, w.y / 520.0) + vec2(1.3, 7.1), oc);
+    m += (cg - 0.35) * 300.0 * smoothstep(700.0, 1800.0, m);
+    // mid-scale eroded rock: ribs, ledges and buttress faces
+    float oe = clamp(log2(420.0 / max(2.2 * fp, 0.5)), 0.0, 6.0);
+    m += 140.0 * erodedFbm(w / 420.0 + vec2(5.5, 3.3), oe) * smoothstep(700.0, 1600.0, m);
+    // irregular limestone ledges: tilted, folded, in patches, and faded out where they would be
+    // sub-pixel (on the far peaks they otherwise collect snow into ruler-straight lines)
+    float tz2 = (m + 0.12 * w.x + 0.06 * w.y + 420.0 * vn(w * 0.0004 + 1.0) + 130.0 * vn(w * 0.0007)) / 95.0; float tf2 = fract(tz2);
+    float ledgeMask = smoothstep(-0.1, 0.5, vn(w * 0.0011 + 4.4)) * smoothstep(1000.0, 1600.0, m) * smoothstep(9.0, 3.0, fp);
+    m += (smoothstep(0.3, 0.7, tf2) - tf2) * 95.0 * 0.32 * ledgeMask;
+    h = mix(h, h + m, mtnW);
+    // buttresses and gullies on the wall face itself (in the wall frame, so they run down the fall line
+    // and reach the foot instead of fading with the ramp weight)
+    float faceM = smoothstep(0.02, 0.25, wallW);
+    float ob = clamp(log2(300.0 / max(2.2 * fp, 0.5)), 0.0, 6.0);
+    // ~130 m rib spacing, 200 m relief: real buttresses with gullies between (the material pass re-evaluates
+    // this ridged value for cavity shading, since the frontal sun casts no shadow into the gullies)
+    h += 200.0 * (ridgedFbm(vec2(along / 260.0, across / 900.0) + vec2(5.0, 2.0), ob) - 0.4) * faceM;
+  }
+  // --- rolling meadow detail (fades out on mountains), down to ~1 m bumps near the camera
+  float octM = clamp(log2(800.0 / max(2.0 * fp, 0.03)), 0.0, 11.0);
+  h += 38.0 * fbmF(w / 800.0 + 2.3, octM) * (1.0 - 0.7 * mtnW);
+  float octK = clamp(log2(170.0 / max(2.0 * fp, 0.03)), 0.0, 7.0);
+  h += 9.0 * fbmF(w / 170.0 + 5.1, octK) * (1.0 - mtnW);
+  float octB = clamp(log2(18.0 / max(2.0 * fp, 0.03)), 0.0, 5.0);
+  h += 1.6 * fbmF(p / 18.0 + 7.7, octB) * (1.0 - mtnW);
+  float octU = clamp(log2(75.0 / max(2.0 * fp, 0.03)), 0.0, 3.0);
+  h += 5.0 * fbmF(p / 75.0 + 3.1, octU) * (1.0 - mtnW);
+  // paths are slightly sunken into the turf
+  h -= 0.35 * (1.0 - smoothstep(1.2, 2.6, pathDist(p)));
+  return h;
+}
+
+// ------------------------------------------------------------ conifers (SDF on a jittered grid)
+// chalets: x, z, rotation. A cluster around the path junction, spread across the meadow
+const int NCH = 13;
+const vec3 CH[13] = vec3[13](vec3(74.0, 450.0, 0.4), vec3(-7.0, 520.0, -0.3), vec3(-10.0, 595.0, 0.9), vec3(-92.0, 645.0, 0.2),
+                             vec3(-56.0, 740.0, -0.5), vec3(-128.0, 765.0, 1.1), vec3(-65.0, 835.0, 0.3), vec3(-105.0, 925.0, -0.8),
+                             vec3(80.0, 610.0, 0.6), vec3(0.0, 745.0, -0.2), vec3(-190.0, 690.0, 0.8), vec3(-280.0, 640.0, 0.3), vec3(175.0, 520.0, -0.6));
+const float TC = 11.0;
+// pixel-footprint range over which SDF trees thin out and the forest-albedo term takes over
+const float TREE_FP0 = 1.1, TREE_FP1 = 2.4;
+float forestDensity(vec2 c, float h) {
+  float x = c.x, z = c.y;
+  float n = vn(c * 0.0019 + vec2(5.2, 1.3)) * 0.6 + vn(c * 0.0061 + 3.3) * 0.3 + vn(c * 0.019) * 0.1;
+  float across = dot(c - WP, WN);
+  // the dark forest band across the middle distance, sweeping in from the left and ending mid-frame
+  float bz = 980.0 + 0.3 * x - 130.0 * sin(x * 0.0021 + 1.0);
+  float band = exp(-sq((z - bz) / (150.0 + 70.0 * vn(c * 0.003 + 1.0)))) * smoothstep(520.0, 150.0, x);
+  // the wooded hillside on the left, reaching the lower-left corner as a tongue
+  float left = smoothstep(-150.0, -480.0, x + 0.25 * z + 70.0 * vn(c * 0.0035)) * smoothstep(100.0, 360.0, z);
+  // groves on the near knoll at the lower right
+  // (dense, and reaching down to the near edge of the frame like the reference's lower-right forest)
+  float right = smoothstep(60.0, 360.0, x - 0.45 * (z - 450.0) + 60.0 * vn(c * 0.004 + 2.0)) * smoothstep(140.0, 330.0, z) * smoothstep(1300.0, 950.0, z);
+  // sparse random stands, kept off the open pasture under the wall and thinning toward the right
+  float patchy = smoothstep(0.45, 0.62, n) * 0.25 * smoothstep(-900.0, -1600.0, across) * smoothstep(900.0, 200.0, x);
+  // the wooded flanks of the glacial valley (far left; only ever drawn as the unresolved-forest albedo)
+  float vside = smoothstep(2000.0, 3600.0, z) * smoothstep(300.0, -700.0, x + 0.15 * z) * smoothstep(-0.6, 0.0, n);
+  float d = patchy + 0.95 * band * smoothstep(-0.45, -0.05, n) + 0.9 * left * smoothstep(-0.5, -0.1, n) + 0.85 * right * smoothstep(-0.3, 0.2, n) + 0.8 * vside;
+  d = max(d, 0.003 + 0.045 * smoothstep(-0.05, 0.3, n) * smoothstep(0.35, 0.6, vn(c * 0.011 + 2.0) * 0.5 + 0.5));  // scattered groups
+  d *= smoothstep(5.0, 14.0, pathDist(c));                         // keep the paths clear
+  d *= smoothstep(330.0, 110.0, h + 60.0 * vn(c * 0.002 + 7.0));   // ragged treeline
+  float dc = 1e5;
+  for (int i = 0; i < NCH; i++) dc = min(dc, length(c - CH[i].xy));
+  d *= smoothstep(16.0, 42.0, dc);                                 // clearings around the chalets
+  return clamp(d, 0.0, 0.93);
+}
+float sdBox(vec3 p, vec3 b) { vec3 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0); }
+
+// returns tree distance; hf = height fraction inside the tree, tid = per-tree random.
+// fp thins the stand out between TREE_FP0 and TREE_FP1 (the forest-albedo term fades in over the same range)
+float treesSDF(vec3 p, float hb, float fp, out float hfr, out float tid) {
+  vec2 g = p.xz / TC;
+  vec2 cell = floor(g);
+  vec2 o = step(0.5, g - cell) - 1.0;           // 2x2 neighbourhood toward p's quadrant
+  float best = 1e5; hfr = 0.0; tid = 0.0;
+  float fade = smoothstep(TREE_FP1, TREE_FP0, fp);
+  for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) {
+    vec2 c = cell + o + vec2(float(i), float(j));
+    float r0 = hash2(c * 1.0 + 0.5), r1 = hash2(c + 71.3), r2 = hash2(c + 13.9), r3 = hash2(c - 41.7);
+    float dens = forestDensity((c + 0.5) * TC, hb) * fade;
+    if (r0 > dens) continue;
+    vec2 tp = (c + 0.5 + (vec2(r1, r2) - 0.5) * 0.42) * TC;
+    // heights: mostly 9-24 m, a few emergent old trees; denser stands grow taller
+    float H = (mix(9.0, 24.0, r3) + 9.0 * step(0.92, fract(r1 * 9.1))) * mix(0.82, 1.12, dens);
+    float R = H * (0.22 + 0.1 * fract(r3 * 13.7));
+    vec3 q = vec3(p.x - tp.x, p.y - hb, p.z - tp.y);
+    float y = q.y / H;
+    // crown skew: the axis leans up to ~15% of H, so no two silhouettes are the same cone
+    q.xz -= (vec2(fract(r0 * 5.3), fract(r2 * 3.7)) - 0.5) * 0.3 * H * clamp(y, 0.0, 1.0);
+    float rr = length(q.xz);
+    // whorled branch tiers (5-11 per tree): smooth sawtooth -> each tier widest at its base (snow shelves on top)
+    float tiers = 5.0 + 6.0 * r1;
+    float ty = fract(y * tiers + r2);
+    float saw = min(ty * 6.0, 1.0) * (1.0 - ty);
+    float ang = atan(q.z, q.x);
+    float br = 0.09 * sin(ang * 7.0 + r0 * 40.0 + y * 11.0) + 0.05 * sin(ang * 13.0 - y * 23.0);
+    float rad = R * (1.0 - y) * (0.55 + 0.45 * saw + br);
+    float d = (rr - max(rad, 0.0)) * 0.62;
+    d = max(d, 0.15 * H - q.y);
+    d = max(d, q.y - H);
+    float trunk = max(rr - 0.06 * H * (1.0 - y), max(q.y - 0.3 * H, -q.y - 2.0));
+    d = min(d, trunk);
+    if (d < best) { best = d; hfr = clamp(y, 0.0, 1.0); tid = r3; }
+  }
+  return best;
+}
+float chaletsSDF(vec3 p, float hb, out float m) {
+  float best = 1e5; m = 3.0;
+  for (int i = 0; i < NCH; i++) {
+    vec3 c = CH[i];
+    vec2 dxz = p.xz - c.xy;
+    if (dot(dxz, dxz) > 1600.0) continue;
+    float cs = cos(c.z), sn = sin(c.z);
+    vec3 q = vec3(cs * dxz.x - sn * dxz.y, p.y - hb, sn * dxz.x + cs * dxz.y);
+    float sc = 1.1 + 0.6 * hash2(vec2(float(i) * 3.7, 1.0));          // per-chalet scale 1.1-1.7
+    q /= sc;
+    // pitched roof: thin slab following |z|*tan(28deg), overhanging 0.7 m; the walls are clipped by the
+    // roof plane so the gable ends are triangles under it instead of a box poking through the slab
+    float ry = 4.7 - abs(q.z) * 0.53;
+    float walls = max(sdBox(q - vec3(0.0, 1.0, 0.0), vec3(4.6, 3.8, 3.1)), q.y - ry + 0.12);
+    float roof = max(abs(q.y - ry) * 0.88 - 0.22, max(abs(q.x) - 5.3, abs(q.z) - 3.8));
+    float d = min(walls, roof) * sc;
+    if (d < best) { best = d; m = roof < walls ? 4.0 : 3.0; }
+  }
+  return best;
+}
+float nearChalets(vec2 p) {
+  return (p.y > 400.0 && p.y < 980.0 && p.x > -330.0 && p.x < 230.0) ? 1.0 : 0.0;
+}
+
+// Every terrain / scene distance query of main() goes through this ONE call site (a phase state machine
+// drives it, matte-style), so the big height function and the tree / chalet SDFs are inlined exactly once:
+// the shader stays small and compiles quickly on ANGLE/Metal (Safari) instead of inlining terrainH ~25x.
+//   mode 0: heightfield only (returns p.y - h)
+//   mode 1: full scene for the march / SDF normals: trees (with a bounding slab above them) + chalets
+//   mode 2: sun-shadow ray: trees only where the ray is near the ground, no slab, no chalets
+// mat: 1 terrain, 2 tree, 3 wall, 4 roof. fpO is the footprint used for the objects (the shadow ray keeps
+// the surface's footprint for the trees while the terrain LOD coarsens along the ray).
+float sceneQ(vec3 p, float fp, float fpO, int mode, out float mat, out float hb, out float dTree, out float hfr, out float tid) {
+  hb = terrainH(p.xz, fp);
+  float dy = p.y - hb;
+  mat = 1.0; dTree = 1e5; hfr = 0.0; tid = 0.0;
+  if (mode == 0) return dy;
+  bool near = fpO < TREE_FP1 && dy < 36.0;
+  if (near) dTree = treesSDF(p, hb, fpO, hfr, tid);
+  if (mode == 2) return min(dy, dTree);
+  float d = dy * 0.42;
+  if (fpO < TREE_FP1 && !near) d = min(d, dy - 35.5);
+  if (dTree < d) { d = dTree; mat = 2.0; }
+  if (nearChalets(p.xz) > 0.5 && dy < 14.0) { float cm; float dc = chaletsSDF(p, hb, cm); if (dc < d) { d = dc; mat = cm; } }
+  return d;
+}
+
+void main() {
+  vec3 rd = camRay(gl_FragCoord.xy);
+  vec3 ro = uCamPos;
+  float t = 2.0, tPrev = t, mat = 0.0;
+  float bA = 0.0, bB = 0.0;                                   // bisection bracket
+  vec3 pos = vec3(0.0), nD = vec3(0.0, 1.0, 0.0), nS = nD, so = vec3(0.0);
+  float fp = 0.0, hT = 0.0, hfr = 0.0, tid = 0.0, sh = 1.0, ts = 0.0, ao = 1.0, canopy = 0.0;
+  float hN[8]; vec4 tet = vec4(0.0);
+  float occ = 0.0, wsum = 0.0, curvS = 0.0, curvLS = 0.0;
+  bool hit = false;
+  int phase = 0, j = 0, mi = 0;
+  const vec2 k2 = vec2(1.0, -1.0);
+  // phases: 0 march -> 1 bisection refine (heightfield, steep cliffs) -> 2 height at the hit -> 3 normal probes
+  //         -> 4 soft sun shadow -> 5 AO horizon probes along the normal -> 6 canopy proximity -> 7 curvature -> 8 done
+  for (int it = 0; it < uIter; it++) {
+    vec3 q; float qf, qfo; int mode;
+    if (phase == 0) { q = ro + rd * t; qf = t * uPixAng; qfo = qf; mode = 1; }
+    else if (phase == 1) { float mt = 0.5 * (bA + bB); q = ro + rd * mt; qf = mt * uPixAng; qfo = qf; mode = 0; }
+    else if (phase == 2) { q = pos; qf = fp; qfo = fp; mode = 0; }
+    else if (phase == 3) {
+      if (mat == 1.0) {
+        // central differences at two scales: j<4 detail normal (fine footprint), j<8 smooth normal
+        float e = j < 4 ? max(0.05, fp * 0.6) : max(1.5, fp * 5.0);
+        int jj = j & 3;
+        vec2 o = jj == 0 ? vec2(e, 0.0) : jj == 1 ? vec2(-e, 0.0) : jj == 2 ? vec2(0.0, e) : vec2(0.0, -e);
+        q = vec3(pos.x + o.x, pos.y, pos.z + o.y); qf = j < 4 ? fp * 0.45 : fp * 5.0; qfo = qf; mode = 0;
+      } else {
+        // tetrahedral gradient of the scene SDF
+        float e = max(0.03, fp * 0.5);
+        vec3 kk = j == 0 ? k2.xyy : j == 1 ? k2.yyx : j == 2 ? k2.yxy : k2.xxx;
+        q = pos + kk * e; qf = fp; qfo = fp; mode = 1;
+      }
+    }
+    else if (phase == 4) { q = so + uSunDir * ts; qf = max(fp, ts * 0.004); qfo = fp; mode = (fp < TREE_FP1 && ts < 450.0) ? 2 : 0; }
+    else if (phase == 5) { float hh = max(1.5, fp * 2.0) * pow(3.0, float(j)); q = pos + nS * hh; qf = max(fp, hh * 0.2); qfo = qf; mode = 0; }
+    else if (phase == 6) { q = pos + vec3(0.0, 1.5, 0.0); qf = fp; qfo = fp; mode = 1; }
+    else if (phase == 7) {
+      // height vs. the mean of 4 neighbours at two scales (hummocks / ribs), consumed by the grass albedo
+      float e = j < 4 ? max(10.0, fp * 6.0) : max(45.0, fp * 14.0);
+      int jj = j & 3;
+      vec2 o = jj == 0 ? vec2(e, 0.0) : jj == 1 ? vec2(-e, 0.0) : jj == 2 ? vec2(0.0, e) : vec2(0.0, -e);
+      q = vec3(pos.x + o.x, pos.y, pos.z + o.y); qf = fp; qfo = fp; mode = 0;
+    }
+    else break;
+    float m_, hb_, dT_, hfr_, tid_;
+    float d = sceneQ(q, qf, qfo, mode, m_, hb_, dT_, hfr_, tid_);
+    if (phase == 0) {
+      if (d < max(0.35 * qf, 0.004)) {
+        hit = true; mat = m_; hfr = hfr_; tid = tid_;
+        if (mat == 1.0) { bA = tPrev; bB = t; phase = 1; j = 0; }
+        else { pos = ro + rd * t; fp = qf; phase = 2; }
+      }
+      else if ((q.y > HMAX && rd.y > 0.0) || t > TMAX || ++mi >= 900) break;
+      else { tPrev = t; t += max(d, 0.25 * qf); }
+    } else if (phase == 1) {
+      float mt = 0.5 * (bA + bB); if (d < 0.0) bB = mt; else bA = mt;
+      if (++j >= 6) { t = bB; pos = ro + rd * t; fp = t * uPixAng; phase = 2; }
+    } else if (phase == 2) { hT = hb_; phase = 3; j = 0; }
+    else if (phase == 3) {
+      bool done;
+      if (mat == 1.0) {
+        hN[j] = hb_; done = ++j >= 8;
+        if (done) { nD = normalize(vec3(hN[1] - hN[0], 2.0 * max(0.05, fp * 0.6), hN[3] - hN[2])); nS = normalize(vec3(hN[5] - hN[4], 2.0 * max(1.5, fp * 5.0), hN[7] - hN[6])); }
+      } else {
+        tet[j] = d; done = ++j >= 4;
+        if (done) { nD = normalize(k2.xyy * tet.x + k2.yyx * tet.y + k2.yxy * tet.z + k2.xxx * tet.w); nS = nD; }
+      }
+      if (done) {
+        if (dot(nD, uSunDir) > -0.2) { so = pos + nD * max(0.15, fp * 2.0); ts = 0.4; phase = 4; j = 0; }
+        else { sh = 0.0; phase = 5; j = 0; }
+      }
+    } else if (phase == 4) {
+      sh = min(sh, 10.0 * d / ts);
+      ts += clamp(d * 0.55, 0.25 + ts * 0.012, 60.0 + ts * 0.06);
+      if (sh < 0.002 || ++j >= 110 || ts > 22000.0 || so.y + uSunDir.y * ts > HMAX) { phase = 5; j = 0; }
+    } else if (phase == 5) {
+      float hh = max(1.5, fp * 2.0) * pow(3.0, float(j));
+      occ += clamp((hh - d) / hh, 0.0, 1.0) * (1.0 / float(j + 1)); wsum += 1.0 / float(j + 1);
+      if (++j >= 5) { ao = clamp(1.0 - 1.5 * occ / wsum, 0.0, 1.0); phase = mat == 1.0 ? (fp < TREE_FP1 ? 6 : 7) : 8; j = 0; }
+    } else if (phase == 6) {
+      // ground darkening under / near trees (needle litter + occlusion); the same proximity is the canopy
+      // interception term below (the ground beneath a spruce stays bare longest)
+      canopy = 1.0 - smoothstep(-0.5, 4.5, dT_); ao *= mix(1.0, 0.45, canopy); phase = 7; j = 0;
+    }
+    else { if (j < 4) curvS += hb_; else curvLS += hb_; if (++j >= 8) phase = 8; }
+  }
+  if (!hit) { o0 = vec4(65000.0, 0.0, 1.0, 1.0); o1 = vec4(0.0); o2 = vec4(0.0); return; }
+  sh = smoothstep(0.0, 1.0, clamp(sh, 0.0, 1.0));
+  // ---- materials
+  vec3 alb; float snowT; float grass = 0.0;
+  vec2 xz = pos.xz;
+  if (mat == 1.0) {
+    vec2 w = xz + 180.0 * vec2(vn(xz * 0.00033 + vec2(4.1, 0.3)), vn(xz * 0.00033 + vec2(-2.3, 6.1)));
+    float mtnW, valW, wallW, across, along, footD; layoutW(w, mtnW, valW, wallW, across, along, footD);
+    float steep = 1.0 - smoothstep(0.42, 0.86, nS.y);
+    float alt = pos.y;
+    float lodD = clamp(log2(5.5 / max(fp, 0.01)), 0.0, 6.0);   // n3's 11 m base octave at Nyquist: no shimmer on the far slopes
+    float wAlong = smoothstep(-3800.0, -2200.0, along) * smoothstep(14500.0, 11000.0, along);   // the wall's extent along its foot
+    float faceM = smoothstep(0.02, 0.25, wallW);
+    // the same ridged buttress field the height uses (terrainH): crests ~1, gullies ~0
+    float butt = ridgedFbm(vec2(along / 260.0, across / 900.0) + vec2(5.0, 2.0), clamp(log2(300.0 / max(2.2 * fp, 0.5)), 0.0, 6.0));
+    // local curvature (height vs. the mean of 4 neighbours) at two scales: hummocks near the camera,
+    // ribs/gullies on the far slopes. + on crests, - in hollows
+    float ce = max(10.0, fp * 6.0), cl = max(45.0, fp * 14.0);
+    float curv = (hT - 0.25 * curvS) / ce;      // neighbour sums from phase 7
+    float curvL = (hT - 0.25 * curvLS) / cl;
+    // grass: yellow-olive alpine pasture; pale/dry on ribs and sunny slopes, lush in hollows, scrub patches
+    float n1 = vn(xz * 0.0027 + 1.7), n3 = fbmF(xz * 0.09, lodD);
+    vec3 gA = vec3(0.125, 0.140, 0.042), gB = vec3(0.185, 0.175, 0.062), gC = vec3(0.075, 0.098, 0.032);
+    vec3 grassC = mix(gA, gB, smoothstep(-0.3, 0.7, n1));
+    grassC = mix(grassC, gC, 0.9 * max(smoothstep(0.03, 0.14, -curv), smoothstep(0.02, 0.1, -curvL)));
+    grassC = mix(grassC, gB * vec3(1.05, 1.0, 0.9), 0.8 * max(smoothstep(0.03, 0.14, curv), smoothstep(0.02, 0.1, curvL)));
+    float scrub = smoothstep(0.38, 0.65, vn(xz * 0.03 + 9.1) * 0.6 + vn(xz * 0.09 + 2.2) * 0.4);   // dwarf pine / alder patches
+    grassC = mix(grassC, vec3(0.05, 0.075, 0.03), 0.6 * scrub * (1.0 - steep));
+    grassC = mix(grassC, vec3(0.24, 0.21, 0.08), 0.3 * smoothstep(0.5, 0.9, vn(xz * 0.012 + 5.5)) * smoothstep(0.1, 0.5, steep + 0.3 * n1));  // straw
+    // 40-80 m lush / bleached patches (grazing, drainage): the macro mottle of a real pasture, +-25%
+    float pch = vn(xz * 0.015 + 6.3) * 0.7 + vn(xz * 0.045 + 1.9) * 0.3;
+    grassC *= 1.0 + 0.25 * pch;
+    grassC = mix(grassC, grassC * vec3(0.88, 1.0, 0.75), 0.5 * smoothstep(0.1, 0.6, pch));          // bleached = yellower
+    grassC = mix(grassC, grassC * vec3(0.9, 1.0, 1.1), 0.5 * smoothstep(-0.1, -0.6, pch));          // lush = deeper green
+    grassC *= 0.85 + 0.3 * n3;
+    grassC = mix(grassC, grassC * vec3(1.0, 0.96, 0.85), smoothstep(0.1, 0.45, steep));   // drier on slopes (never brighter than flat turf)
+    grassC = mix(grassC, grassC * vec3(0.72, 0.74, 0.7), 0.7 * mtnW);                    // muted alpine turf
+    // rock: grey-blue limestone, strata bands (altitude-keyed, so they stay horizontal on the faces),
+    // mottling from 3D noise (2D xz noise would smear vertically on a cliff), darker water streaks
+    // bedding dips ~20 deg along the strike (alt + 0.36 * along), as on the reference's wall
+    float strat = vn(vec2(alt * 0.011 + along * 0.004 + 0.5 * vn(xz * 0.0015), along * 0.0013)) * 0.6 + vn3(pos * 0.006) * 0.4;
+    float stk = vn3(pos * 0.012 + 3.0);
+    vec3 rockC = vec3(0.155, 0.16, 0.172) * max(0.68 + 0.5 * strat, 0.12) * (0.8 + 0.3 * stk);
+    rockC = mix(rockC, vec3(0.16, 0.14, 0.11), 0.3 * smoothstep(0.2, 0.8, vn3(pos * 0.004)));
+    // water-stain streaks run down the fall line: noise elongated 8:1 along altitude, in the wall frame
+    vec2 sq2 = vec2(along * 0.05, alt * 0.006);
+    float streaks = vn(sq2) * 0.6 + vn(sq2 * vec2(2.1, 1.9) + 5.0) * 0.4 * smoothstep(8.0, 2.0, fp);
+    rockC *= 0.85 + 0.3 * smoothstep(-0.5, 0.6, streaks);
+    // gully cavity: the sun azimuth is only ~11 deg off the near face's normal, so the real shadow test
+    // leaves its gullies as bright as the ribs. Fake the cavity shading from the baked concavity (curvL,
+    // phase 7: gullies, couloirs, ledge undersides) plus the broad (2-octave) buttress field, and give each
+    // rib a lit and a shaded flank from that field's along-gradient (the sun has a small +along component)
+    vec2 bq = vec2(along / 260.0, across / 900.0) + vec2(5.0, 2.0);
+    float bA = ridgedFbm(bq + vec2(0.17, 0.0), 2.0), bB = ridgedFbm(bq - vec2(0.17, 0.0), 2.0);
+    float cav = sat(smoothstep(0.03, 0.45, -curvL) + 0.8 * (1.0 - smoothstep(0.12, 0.5, 0.5 * (bA + bB))) * faceM);
+    float ribLit = clamp((bB - bA) * 3.0, -1.0, 1.0);
+    rockC *= mix(1.0, 0.45, cav * mix(0.6, 1.0, faceM)) * (1.0 + 0.25 * ribLit * faceM) * (1.0 + 0.18 * smoothstep(0.03, 0.4, curvL));
+    rockC = mix(rockC, rockC * vec3(0.9, 1.0, 0.85), 0.35 * smoothstep(0.0, 0.6, vn3(pos * 0.013)));  // lichen tint
+    // rock/turf boundary: a noisy threshold on steepness so outcrops break through the grass instead of a smooth smear
+    float rn = vn(w * 0.012 + 3.0) * 0.6 + vn(w * 0.04) * 0.4;
+    float rockW = smoothstep(0.3, 0.66, steep * 1.15 + 0.22 * rn);
+    rockW = max(rockW, smoothstep(1150.0, 1900.0, alt + 350.0 * vn(xz * 0.0021)) * mix(0.6, 1.0, steep));
+    rockW *= smoothstep(0.0, 0.25, mtnW + valW * 0.8 + steep * 0.5);
+    // the wall's foot: broken rock and turf within ~120 m below the face instead of a sunlit grass lip
+    rockW = max(rockW, 0.8 * smoothstep(-130.0, 20.0, footD + 60.0 * rn) * wAlong * smoothstep(0.2, 0.7, 0.5 + 0.5 * vn(w * 0.02 + 7.0) + 0.4 * steep));
+    // rock albedo from 3D noise as well (no vertical stretching on cliffs)
+    float r3 = fbm3(pos / 45.0, clamp(log2(45.0 / max(1.5 * fp, 0.2)), 0.0, 6.0));
+    rockC *= 0.78 + 0.5 * r3;
+    alb = mix(grassC, rockC, rockW);
+    // scree fans spilling from the gullies at the wall's foot: each fan is a tongue that is narrow at
+    // its apex (the gully mouth) and spreads downslope, so the foot is broken up rather than banded
+    float fanN = vn(vec2(along * 0.0055, 0.3)) * 0.7 + vn(vec2(along * 0.016, 0.7)) * 0.3;    // which gullies shed scree
+    float fanW = smoothstep(0.0, 0.55, fanN) * (0.45 + 0.55 * smoothstep(0.0, -300.0, footD));   // widens downslope
+    float scree = fanW * smoothstep(-520.0, -180.0, footD + 80.0 * vn(w * 0.01)) * smoothstep(190.0, 70.0, footD) * (1.0 - 0.6 * steep)
+                * smoothstep(-3800.0, -2200.0, along) * smoothstep(5000.0, 1500.0, along) * (1.0 - rockW);
+    scree *= smoothstep(0.15, 0.55, scree + 0.3 * vn(w * 0.03 + 1.0));                           // ragged edges
+    alb = mix(alb, vec3(0.21, 0.19, 0.16) * (0.7 + 0.6 * r3) * (0.85 + 0.3 * n3), scree * 0.5);
+    nD = normalize(mix(nD, rockBump(pos, nD, fp, 0.7), rockW * smoothstep(0.1, 0.5, steep)));
+    // distant forest (beyond the tree-SDF range): dark mottled canopy with stand-scale hue variation
+    float fcov = 0.0, fthr = 0.0;
+    if (fp >= TREE_FP0) {
+      float fd = forestDensity(xz, alt) * (1.0 - rockW);
+      float fn = 0.5 + 0.5 * vn(xz * 0.08);
+      float fn2 = 0.5 + 0.5 * vn(xz * 0.35);                                    // individual crowns as speckle
+      float fn3 = vn(xz * 0.02 + 4.0);
+      float cov = smoothstep(0.25, 0.7, fd + 0.3 * (fn - 0.5)) * smoothstep(TREE_FP0, TREE_FP1, fp);
+      // darker than the resolved trees' albedo: a canopy seen from above is mostly its own shadow
+      vec3 fc = mix(vec3(0.028, 0.05, 0.026), vec3(0.05, 0.066, 0.028), smoothstep(-0.3, 0.5, fn3)) * 0.7 * (0.3 + 1.4 * fn2);
+      alb = mix(alb, fc, cov * 0.9);
+      ao *= 1.0 - 0.4 * cov;
+      fcov = cov;
+      // unresolved far canopy: stands whiten together in ~250 m drifts (low-frequency stand noise) with a small
+      // per-crown jitter, lagging the meadow; a per-crown threshold alone read as salt-and-pepper
+      fthr = 0.5 + 0.35 * (0.5 + 0.5 * vn(xz * 0.004 + 1.0)) + 0.1 * fn2;
+    }
+    // paths
+    float pd = pathDist(xz);
+    float pm = (1.0 - smoothstep(1.5, 2.6 + fp * 0.4, pd)) * (1.0 - mtnW);
+    alb = mix(alb, vec3(0.33, 0.29, 0.22) * (0.85 + 0.2 * n3), pm);
+    grass = (1.0 - rockW) * (1.0 - pm) * (1.0 - fcov) * (1.0 - 0.8 * scree);
+    // ---- snow threshold: flat, high, lee-side areas get snow first; steep cliffs stay rocky
+    float altF = smoothstep(1150.0, 2300.0, alt + 280.0 * vn(xz * 0.0031));
+    float drift = vn(vec2(xz.x * 0.0022 + xz.y * 0.0011, xz.y * 0.0065));   // wind-elongated drifts
+    float patchN = vn(xz * 0.006 + 8.1) * 0.6 + vn(xz * 0.025) * 0.4;
+    float tuft = fbmF(xz * 0.7, clamp(log2(1.4 / max(fp, 0.01)), 0.0, 4.0)) * 0.6 + vn(xz * 0.09 + 3.3) * 0.4;  // grass tufts poke through (4 octaves near the camera: ~9 cm)
+    // far peaks (fp > ~3 m/px): the per-pixel patch / tuft / drift thresholds would split the summit snow into
+    // salt noise, so they collapse to their means and the ledge test uses the smooth normal -> continuous fields
+    float farM = smoothstep(2.5, 5.0, fp);
+    float ledge = smoothstep(0.55, 0.92, mix(nD.y, nS.y, farM));
+    float gentle = 1.0 - smoothstep(0.78, 0.99, nS.y);
+    float patchT = mix(smoothstep(-0.6, 0.6, patchN), 0.5, farM), driftT = mix(drift, 0.0, farM), tuftT = mix(tuft, 0.0, farM);
+    // flat meadow thresholds are spread over ~0.12..0.95 so cover grows patch by patch for minutes.
+    // Per-material order (matte's table): high/flat first, trodden path +0.16 later, bare rock +0.12 later,
+    // lee faces of the prevailing (+x) wind drift in first while windward faces are scoured (-0.10 n.x),
+    // and the ground under a canopy stays bare longest (+0.1..0.4 interception, varied per stand so the sheltered
+    // ground becomes islands rather than one hole at the forest edge). The tuft term (0.25) is what breaks a
+    // patch margin into tuft-scale fringes instead of a smooth ramp
+    snowT = 0.05 + 0.62 * patchT + 0.10 * (0.5 + 0.5 * driftT) + 0.25 * (0.5 + 0.5 * tuftT) * grass
+          + 0.10 * gentle + 0.16 * pm + 0.12 * rockW + steep * (0.45 + 1.0 * rockW) - 0.55 * ledge * steep * rockW
+          - mix(0.95, 1.2, smoothstep(2000.0, 2600.0, alt)) * altF * (1.0 - 0.55 * steep);
+    snowT -= 0.10 * nS.x * (1.0 - 0.5 * rockW);
+    snowT += canopy * (0.25 + 0.15 * vn(xz * 0.01 + 5.0));
+    snowT = mix(snowT, fthr, fcov);
+    snowT -= 0.75 * smoothstep(2500.0, 3500.0, alt + 200.0 * driftT) * (1.0 - 0.7 * steep);   // steep far faces keep their rock
+    snowT -= 0.9 * smoothstep(1500.0, 2200.0, alt) * ledge * rockW;          // old snow lying on high ledges
+    // old snow in the wall's upper couloirs (concave + low buttress value), as in the reference's upper right;
+    // scaled with steep so it cancels the cliff penalty, gated per gully so only some of them hold snow
+    float coul = sat(smoothstep(0.03, 0.35, -curvL) + 0.7 * (1.0 - smoothstep(0.06, 0.35, butt))) * smoothstep(-0.25, 0.3, vn(vec2(along * 0.0025, alt * 0.002) + 3.0));
+    snowT -= (0.6 + 1.3 * steep) * smoothstep(1100.0, 1700.0, alt) * coul * rockW * faceM;
+    snowT = max(snowT, mix(0.09, -1.0, altF));
+    snowT = min(snowT, mix(0.95, 3.0, rockW));     // every turf band whitens by full cover; only rock can stay bare
+  } else if (mat == 2.0) {
+    // conifer needles: dark green, per-tree hue variation (some bluish, a few yellow-green larches),
+    // lighter toward the sunlit top, darker inside / at the bottom
+    vec3 tc = mix(vec3(0.018, 0.040, 0.020), vec3(0.060, 0.080, 0.030), tid * tid);
+    float tv = fract(tid * 7.3);
+    tc = mix(tc, vec3(0.025, 0.045, 0.042), step(0.68, tv) * step(tv, 0.84));
+    tc = mix(tc, vec3(0.085, 0.10, 0.034), step(0.84, tv));
+    // sun-facing needles read warm yellow-green (the lit side of a spruce is never the same hue as its shade side)
+    tc = mix(tc, vec3(0.05, 0.075, 0.028), 0.6 * smoothstep(0.0, 0.6, dot(nD, uSunDir)));
+    alb = tc * (0.75 + 0.5 * hash2(floor(pos.xz * 3.0) + floor(pos.y * 3.0))) * (0.72 + 0.5 * hfr);
+    ao *= mix(0.35, 1.0, sqrt(hfr));
+    // laden spruce (matte's clump rule on this SDF's whorl geometry): snow clumps collect on the whorl tops
+    // (thr 0.10-0.55, so tops read white above C~0.6), the steep rims and undersides stay dark (thr > 1).
+    // Where the whorls are not resolved (far stands) the per-pixel split would be noise, so the whole
+    // crowns whiten stand by stand over C 0.5-0.95 instead (the same ~250 m stand noise as the far-canopy
+    // albedo, plus a per-tree jitter): distant forest lags the meadow, then goes laden in drifts
+    float up = smoothstep(0.3, 0.85, nD.y);
+    float tn = 0.5 + 0.5 * vn(pos.xz * 1.7 + pos.y * 0.9 + tid * 50.0);
+    float tn2 = 0.5 + 0.5 * vn(pos.xz * 4.3 + pos.y * 2.1 + tid * 20.0);
+    float stand = 0.5 + 0.5 * vn(pos.xz * 0.004 + 1.0);
+    float res = sat(1.7 - fp * 2.2);
+    snowT = mix(0.5 + 0.35 * stand + 0.1 * tid, mix(1.05 + 0.5 * tn2, 0.10 + 0.45 * tn + 0.12 * (1.0 - hfr), up), res);
+  } else if (mat == 3.0) {
+    // sun-bleached timber walls (planked), darker under the eaves where the overhang shades them
+    alb = vec3(0.26, 0.20, 0.13) * (0.8 + 0.3 * vn(vec2(pos.y * 4.0, pos.x + pos.z))) * (0.85 + 0.3 * hash2(floor(pos.xz * 0.03) + 0.5));
+    ao *= mix(1.0, 0.55, smoothstep(2.4, 4.2, pos.y - hT));
+    snowT = 3.0;
+  } else {
+    // dark-brown shingle roofs, weathered per chalet (33 m cells ~ one chalet) and per shingle row
+    alb = vec3(0.09, 0.06, 0.04) * (0.6 + 0.8 * hash2(floor(pos.xz * 0.03))) * (0.85 + 0.3 * hash2(floor(pos.xz * 1.3)));
+    snowT = 0.02 + 0.5 * (1.0 - nD.y);
+  }
+  o0 = vec4(t, mat + (mat == 2.0 ? hfr : grass) * 0.9, sh, ao);
+  o1 = vec4(alb, snowT);
+  o2 = vec4(octEnc(nD), octEnc(nS));
+}
+`;
+
+// ------------------------------------------------------------------ sky + clouds (half res, temporal)
+const FS_SKY = `#version 300 es
+${COMMON}
+uniform sampler2D uPrev, uPrevD;
+uniform float uBlend, uFrame, uSteps;
+layout(location = 0) out vec4 o;    // premultiplied cloud radiance (with aerial perspective), transmittance
+layout(location = 1) out vec4 oD;   // mean cloud distance * cloud opacity (premultiplied so bilinear/temporal filtering stays consistent)
+float cloudD(vec3 p, bool hi) {
+  vec2 q = p.xz + uCloudOff;
+  float wm = weather(q);
+  float cov = uCloudCov;
+  float shape = sat((wm - (1.0 - cov)) / max(cov, 0.05));          // 0..1 inside cloud fields
+  // only the far cumulus field renders: behind the left massif (19 km+, so its summit stays clear) and, to the
+  // right of centre, from ~13 km so a bank floats over the mid-wall ridge like the reference's cloud hugging
+  // the wall, instead of a flat slab base slicing through the summits in front of it
+  vec2 dv = p.xz - uCamPos.xz;
+  float dn = length(dv);
+  float cut = mix(19000.0, 13000.0, smoothstep(0.0, 0.3, dv.x / max(dn, 1.0)));
+  shape *= smoothstep(cut, cut + 5000.0, dn);
+  float cb = CB + 700.0 * (tnoise(q * 0.00025 + 1.0) - 0.5);        // undulating base height
+  float h = (p.y - cb) / (CT - cb);
+  float top = 0.18 + 0.82 * sqrt(shape);                            // taller towers in the cores
+  float prof = smoothstep(0.0, 0.04, h) * smoothstep(top, top * 0.3, h);
+  vec3 r = vec3(q.x, p.y * 1.2, q.y) * 0.0011;
+  // billowy detail: |2n-1| octaves give rounded cauliflower bulges with creases between them
+  float n = tnoise3(r) * 0.5 + abs(tnoise3(r * 2.1 + 3.7) * 2.0 - 1.0) * 0.28;
+  n += hi ? abs(tnoise3(r * 4.4 + 1.1) * 2.0 - 1.0) * 0.14 + abs(tnoise3(r * 9.3 + 5.3) * 2.0 - 1.0) * 0.08 : 0.11;
+  float d = shape * prof * (1.0 + 0.6 * uStormSky) - (1.0 - n) * 0.58 + 0.06;
+  return sat(d * 4.5);
+}
+void main() {
+  vec3 rd = camRay(gl_FragCoord.xy);
+  float T = 1.0; vec3 acc = vec3(0.0);
+  float tHit = -1.0, tSum = 0.0, wSum = 0.0;   // opacity-weighted mean cloud distance (stable under temporal blending)
+  float t0 = (CB - uCamPos.y) / max(rd.y, 1e-4);
+  if (rd.y > 0.02 && t0 < 45000.0) {
+    float t1 = min((CT - uCamPos.y) / rd.y, t0 + 28000.0);
+    float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))) + uFrame * 0.6180339);
+    float steps = uSteps;
+    float dt = (t1 - t0) / steps;
+    float mu = dot(rd, uSunDir);
+    // dual-lobe Henyey-Greenstein: forward silver lining + soft back scatter
+    float g1 = 0.7, g2 = -0.25;
+    float ph = 0.75 * (1.0 - g1 * g1) / pow(1.0 + g1 * g1 - 2.0 * g1 * mu, 1.5) + 0.25 * (1.0 - g2 * g2) / pow(1.0 + g2 * g2 - 2.0 * g2 * mu, 1.5);
+    ph = ph / 12.566 * 3.0 + 0.6;
+    for (int i = 0; i < 48; i++) {
+      if (float(i) >= steps || T < 0.02) break;
+      float tt = t0 + dt * (float(i) + jit);
+      vec3 p = uCamPos + rd * tt;
+      float d = cloudD(p, true);
+      if (d > 0.001) {
+        if (tHit < 0.0) tHit = tt;
+        // light march toward the sun (3 taps)
+        float ld = cloudD(p + uSunDir * 160.0, false) * 160.0 + cloudD(p + uSunDir * 480.0, false) * 320.0 + cloudD(p + uSunDir * 1100.0, false) * 600.0;
+        float sig = 0.0045;
+        float Tl = exp(-ld * sig * 0.9) ;
+        float powder = 1.0 - exp(-d * 4.0);
+        float h = (p.y - CB) / (CT - CB);
+        // darker, bluer bases against bright lit tops: cumulus, not a flat cotton bank
+        vec3 amb = mix(uSkyAmb * vec3(0.55, 0.62, 0.78) * 0.6, uSkyAmb * 1.3 + vec3(0.05), smoothstep(0.0, 0.6, h));
+        vec3 L = uSunCol * Tl * ph * mix(0.5, 1.0, powder) * 1.35 + amb;
+        float a = 1.0 - exp(-d * sig * dt);
+        acc += T * a * L;
+        tSum += T * a * tt; wSum += T * a;
+        T *= 1.0 - a;
+      }
+    }
+    if (wSum > 1e-4) tHit = tSum / wSum;
+    // aerial perspective on the clouds (haze in front of the cloud only; the sky behind gets its own)
+    if (tHit > 0.0) { vec4 f = fogAt(tHit, rd); acc = acc * f.a + f.rgb * (1.0 - T); }
+  }
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec4 prev = texture(uPrev, uv);
+  float prevD = texture(uPrevD, uv).x;
+  o = mix(prev, vec4(acc, T), uBlend);
+  oD = vec4(mix(prevD, max(tHit, 0.0) * (1.0 - T), uBlend), 0.0, 0.0, 1.0);
+}
+`;
+
+// ------------------------------------------------------------------ scene shading
+const FS_SHADE = `#version 300 es
+${COMMON}
+${GBUF}
+uniform sampler2D uSky, uSkyD;
+uniform vec3 uGrassDisp;     // integrated (slow) wind displacement -> rolling grass waves, wrapped by its noise period on the CPU
+uniform vec2 uVeilDir;       // apparent screen-space fall direction of distant snow
+uniform float uVeilAmt;
+uniform vec3 uSway;          // x: lateral wind (m/s), y: integrated sway phase (rad, CPU), z: focal length in px
+uniform vec4 uVeilT;         // integrated scroll of the veil noise sheets (xy: the two streak layers, zw: the slow
+                             // 'big' sheet), wrapped by the noise period (256) on the CPU so storms/wind never jump it
+out vec4 o;
+
+// tree sway: treetops lean/oscillate with the wind. The G-buffer is static, so we invert the
+// displacement field with a 2-step fixed-point lookup (starting mid-tree so silhouettes move too).
+float treeH(vec4 g) { return floor(g.y + 0.001) == 2.0 ? fract(g.y + 0.001) / 0.9 : 0.0; }
+vec2 swayOff(float h, float t, vec2 frag) {
+  float w = uSway.x;
+  float osc = sin(uSway.y + frag.x * 0.013 + frag.y * 0.007) * (0.25 + 0.05 * abs(w));
+  float disp = (0.012 * w + osc * 0.12) * h * h * 18.0;          // metres at the top of an ~18 m spruce
+  return vec2(disp / max(t, 1.0) * uSway.z, 0.0);
+}
+
+// distant falling snow seen as a translucent, streaky veil (two parallax layers)
+float veil(vec2 frag) {
+  vec2 uv = frag / uRes.y;
+  vec2 d = normalize(uVeilDir);
+  mat2 R = mat2(d.y, d.x, -d.x, d.y);
+  vec2 q = R * uv;
+  float s1 = tnoise(vec2(q.x * 210.0, q.y * 9.0 + uVeilT.x));
+  float s2 = tnoise(vec2(q.x * 120.0 + 31.0, q.y * 5.0 + uVeilT.y));
+  float big = tnoise(uv * 3.0 + uVeilT.zw);
+  return (smoothstep(0.5, 1.0, s1) * 0.6 + smoothstep(0.45, 1.0, s2) * 0.6) * (0.55 + 0.9 * big);
+}
+
+// wind-packed snow surface: dunes elongated along the prevailing (+x) wind, big drifts on the far slopes
+// and sastrugi ripples near the camera. Its xz gradient tilts the shading normal so full cover shows form
+// instead of a flat white fill; each scale fades out before it would alias
+float driftH(vec2 p, float t) {
+  // dune axis ~30 deg off the sun azimuth (which is also the wind line), so the flanks catch the low sun
+  vec2 d = vec2(p.x * 0.866 - p.y * 0.5, p.x * 0.5 + p.y * 0.866);
+  vec2 q = vec2(d.x * 0.06, d.y * 0.15);                                                        // dunes ~17 x 7 m
+  float h = (tnoise(q + 3.0) + 0.5 * tnoise(q * 2.2 + 9.0)) * 6.0 * smoothstep(7000.0, 400.0, t);
+  h += tnoise(vec2(p.x * 0.012, p.y * 0.02) + 1.0) * 16.0 * smoothstep(16000.0, 1500.0, t);       // drifts ~80 x 50 m
+  h += tnoise(vec2(d.x * 0.45, d.y * 1.2) + 5.0) * 0.45 * smoothstep(1400.0, 120.0, t);          // sastrugi ~2 m
+  return h;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec4 g0 = G0(uv);
+  {
+    vec2 oMax = swayOff(1.0, g0.x, gl_FragCoord.xy);
+    if (abs(oMax.x) > 0.15 && g0.x < 6000.0) {
+      vec2 x = gl_FragCoord.xy - 0.5 * oMax;
+      for (int i = 0; i < 2; i++) { vec4 gi = G0(x / uRes); x = gl_FragCoord.xy - swayOff(treeH(gi), gi.x, gl_FragCoord.xy); }
+      vec4 gs = G0(x / uRes);
+      if (treeH(gs) > 0.0 || treeH(g0) > 0.0) { uv = x / uRes; g0 = gs; }
+    }
+  }
+  vec3 rd = camRay(uv * uRes);
+  float t = g0.x;
+  vec3 col;
+  vec4 cl = texture(uSky, uv);            // clouds: premultiplied radiance + transmittance
+  float cOp = 1.0 - cl.a;
+  float cT = cOp > 0.003 ? texture(uSkyD, uv).x / cOp : 0.0;   // opacity-weighted mean cloud distance (0 = none)
+  if (t > 60000.0) {
+    // sky: analytic radiance seen through ~30 km of haze, then the cloud slab composited in front
+    col = skyColor(rd);
+    vec4 fs = fogAtM(30000.0, rd, 0.6);
+    col = col * fs.a + fs.rgb;
+    col = col * cl.a + cl.rgb;
+    vec4 f = fogAt(30000.0, rd);
+    col = mix(col, f.rgb / max(1.0 - f.a, 1e-3), clamp(uFogP.z * 900.0, 0.0, 1.0) * smoothstep(0.35, -0.02, rd.y) * 0.95);
+    col *= 1.0 + stratus(rd) * uStormSky;      // deck structure, before the veil so the veil does not flatten it
+    col = mix(col, uFogCol * 1.35 + uSunCol * 0.05, sat(uVeilAmt * veil(gl_FragCoord.xy)));   // distant snow veil
+    o = vec4(col, 1.0);
+    return;
+  } else {
+    vec4 g1 = G1(uv), g2 = G2(uv);
+    vec3 pos = uCamPos + rd * t;
+    vec3 nD = octDec(g2.xy), nS = octDec(g2.zw);
+    float mat = floor(g0.y + 0.001);
+    float grass = mat == 1.0 ? fract(g0.y + 0.001) / 0.9 : 0.0;
+    vec3 alb = g1.rgb;
+    float snowT = g1.w;
+    // cover ramp: tight (+-0.025) on the resolved meadow so margins break at the tuft scale of the threshold
+    // field, wide (+-0.07) only where the far canopy / summit thresholds are unresolved means
+    float cw = mix(0.025, 0.07, smoothstep(1200.0, 2600.0, t));
+    float snow = smoothstep(snowT - cw, snowT + cw, uCover);
+    float ao = g0.w;
+    float cs = cloudShadow(pos);
+    float sh = g0.z * cs;
+    // wind waves rolling over the grass (brightness sheen travelling with the wind)
+    vec2 gq = (pos.xz - uGrassDisp.xz * 1.0) * 0.045;
+    float wave = tnoise(gq) * 0.65 + tnoise(gq * 2.7 + 5.0) * 0.35;
+    alb *= 1.0 + grass * (1.0 - snow) * (wave - 0.5) * (0.22 + 0.25 * uStormSky) * smoothstep(3000.0, 300.0, t);
+    // winter turf: as the snow line closes in on a patch (cover nearing its threshold), with cover in
+    // general and under a storm sky, the grass dies back to a dull straw-olive instead of summer lime
+    float kill = smoothstep(snowT - 0.5, snowT, uCover);
+    float dull = grass * clamp(0.5 * kill + 0.5 * uStormSky + 0.3 * uCover, 0.0, 0.85);
+    alb = mix(alb, vec3(dot(alb, vec3(0.3, 0.5, 0.2))) * vec3(1.08, 0.97, 0.72) * 0.8, dull);
+    vec3 n = normalize(mix(nD, nS, snow * 0.3));
+    if (mat == 1.0 && snow > 0.001) {
+      float e = max(0.4, t * 0.0015);
+      float h0 = driftH(pos.xz, t);
+      vec2 gr = vec2(driftH(pos.xz + vec2(e, 0.0), t) - h0, driftH(pos.xz + vec2(0.0, e), t) - h0) / e;
+      n = normalize(n + vec3(-gr.x, 0.0, -gr.y) * snow);
+    }
+    vec3 snowAlb = vec3(0.84, 0.88, 0.94) * (mat == 2.0 ? 0.9 : 1.0);
+    vec2 rq = pos.xz * vec2(0.09, 0.3);
+    snowAlb *= 0.93 + 0.07 * tnoise(rq + vec2(rq.y * 0.4, 0.0)) * smoothstep(1500.0, 200.0, t);  // wind-packed ripples
+    vec3 a = mix(alb, snowAlb, snow);
+    float ndl = dot(n, uSunDir);
+    float wrap = 0.18 * snow;
+    float diff = clamp((ndl + wrap) / (1.0 + wrap), 0.0, 1.0);
+    vec3 skyL = uSkyAmb * (0.62 + 0.38 * n.y);
+    vec3 bounce = vec3(0.2, 0.22, 0.12) * dot(uSunCol, vec3(0.1)) * (0.5 - 0.5 * n.y) * mix(1.0, 3.0, uCover);
+    if (mat == 2.0) diff = diff * 0.75 + 0.1 * clamp(-ndl, 0.0, 1.0);       // needle canopy translucency
+    col = a * (uSunCol * diff * sh + (skyL + bounce) * ao);
+    // snow: blue-tinted subsurface glow in shade, soft sheen (the sparkles are added in the composite, after FXAA)
+    col += snow * a * uSkyAmb * vec3(0.12, 0.26, 0.58) * (1.0 - sh) * ao;    // blue sky-lit shade
+    vec3 hv = normalize(uSunDir - rd);
+    float nh = max(dot(n, hv), 0.0);
+    col += snow * uSunCol * sh * (0.05 * pow(nh, 18.0) + 0.04 * pow(1.0 - max(dot(n, -rd), 0.0), 5.0));
+  }
+  // aerial perspective + storm whiteout (+ drifting mist banks in the valley)
+  vec4 f = fogAtM(t, rd, mistBanks(rd, t));
+  col = col * f.a + f.rgb;
+  col *= 1.0 + stratus(rd) * uStormSky * (1.0 - f.a);     // deck structure in the whiteout (continuous with the sky)
+  // clouds drifting in front of the far ranges (soft depth test: no hard rows where the two distances cross)
+  if (cT > 0.0) col = mix(col, col * cl.a + cl.rgb, smoothstep(-2500.0, 2500.0, t - cT));
+  // distant snow veil (strong in blizzards)
+  float vamt = uVeilAmt * (1.0 - exp(-t / 900.0));
+  col = mix(col, uFogCol * 1.35 + uSunCol * 0.05, sat(vamt * veil(gl_FragCoord.xy)));
+  o = vec4(col, 1.0);
+}
+`;
+
+// ------------------------------------------------------------------ FXAA (scene only, before flakes)
+const FS_FXAA = `#version 300 es
+precision highp float;
+uniform sampler2D uTex; uniform vec2 uInv;
+out vec4 o;
+float L(vec3 c) { c = c / (1.0 + c); return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main() {
+  vec2 uv = gl_FragCoord.xy * uInv;
+  vec3 m = texture(uTex, uv).rgb;
+  float lNW = L(texture(uTex, uv + vec2(-1.0, -1.0) * uInv).rgb), lNE = L(texture(uTex, uv + vec2(1.0, -1.0) * uInv).rgb);
+  float lSW = L(texture(uTex, uv + vec2(-1.0, 1.0) * uInv).rgb), lSE = L(texture(uTex, uv + vec2(1.0, 1.0) * uInv).rgb);
+  float lM = L(m);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE))), lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  if (lMax - lMin < max(0.03, lMax * 0.1)) { o = vec4(m, 1.0); return; }
+  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));
+  float red = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);
+  dir = clamp(dir / (min(abs(dir.x), abs(dir.y)) + red), -6.0, 6.0) * uInv;
+  vec3 A = 0.5 * (texture(uTex, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture(uTex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 B = A * 0.5 + 0.25 * (texture(uTex, uv - dir * 0.5).rgb + texture(uTex, uv + dir * 0.5).rgb);
+  float lB = L(B);
+  o = vec4((lB < lMin || lB > lMax) ? A : B, 1.0);
+}
+`;
+
+// ------------------------------------------------------------------ snowflakes
+const VS_FLAKE = `#version 300 es
+${COMMON}
+uniform float uAspect, uFocalPx, uExpo, uCocK, uFocus;
+uniform vec3 uDispA, uDispB, uWindA, uWindB;
+// Time never reaches this shader as a raw, growing number: every term is either a CPU-integrated displacement
+// that the CPU lattice-wraps exactly (wind, fall) or a phase whose rate is a multiple of 2*pi/TW, so the CPU
+// can wrap its clock by TW with no discontinuity. Flakes therefore never jump, however long the page runs.
+uniform vec3 uFallQ[40];  // per fall-speed bin: (0,-k*F,0) reduced by the slice-box lattice (F = integral of the storm fall factor)
+uniform float uFallV;     // current fall factor 1 + 0.9 storm (for the velocity / streaks)
+uniform float uFlakeT;    // oscillation clock, wrapped by TW on the CPU
+uniform float uTumT;      // tumble clock: integral of 1 + 0.8 storm, wrapped by TW
+uniform int uLayer;
+uniform vec3 uSlice;      // z0, z1, fade length
+uniform vec2 uHalfXY;
+uniform float uCount;
+uniform uint uSeed;
+uniform vec4 uMs[32];     // mouse segments: ndc position, ndc displacement
+uniform float uMa[32];    // segment ages (s)
+uniform int uMn;
+out vec2 vP;
+flat out vec4 vSeed;
+flat out vec4 vPar;       // drawn radius px (incl. defocus), blur px, type, aa
+flat out vec4 vRot;       // cos, sin (shape vs streak frame), squash, true radius px
+out vec4 vCol;
+out float vDist;
+
+// envelope of one mouse-wake segment over its age: fast attack, ~2.5 s release (the curl stays readable after a sweep)
+float pushProf(float a) { return (1.0 - exp(-a * 9.0)) * exp(-a * 0.4) * smoothstep(3.6, 2.6, a); }
+
+uvec4 pcg4d(uvec4 v) {
+  v = v * 1664525u + 1013904223u;
+  v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+  v ^= v >> 16u;
+  v.x += v.y * v.w; v.y += v.z * v.x; v.z += v.x * v.y; v.w += v.y * v.z;
+  return v;
+}
+const vec2 CORNERS[4] = vec2[4](vec2(-1.0, -1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0));
+const float TW = 120.0;                    // wrap period of the oscillation clocks
+const float W0 = 6.2831853 / TW;           // the rate quantum: every oscillation rate is an integer multiple of it
+const float FK_LO = 0.4675, FK_HI = 1.5525; // fall-speed range (m/s at calm): 0.55*0.85 .. 1.35*1.15
+
+void main() {
+  vec2 corner = CORNERS[gl_VertexID];
+  uint id = uint(gl_InstanceID);
+  // fixed per-flake randoms (stateless, reproducible)
+  uvec4 hA = pcg4d(uvec4(id, uint(uLayer) * 7919u + 17u, uSeed, 0x51ed27u));
+  uvec4 hB = pcg4d(hA ^ uvec4(0x9e3779b9u));
+  uvec4 hC = pcg4d(hB + uvec4(0x632be5abu));
+  vec4 r0 = vec4(hA >> 8u) * (1.0 / 16777216.0);
+  vec4 r1 = vec4(hB >> 8u) * (1.0 / 16777216.0);
+  vec4 r2 = vec4(hC >> 8u) * (1.0 / 16777216.0);
+
+  float z0 = uSlice.x, z1 = uSlice.y;
+  vec3 halfB = vec3(uHalfXY, 0.5 * (z1 - z0));
+  vec3 cen = vec3(0.0, 0.0, 0.5 * (z0 + z1));
+  vec3 bc = (r0.xyz * 2.0 - 1.0) * halfB;
+  vec3 bw = uCamR * bc.x + uCamU * bc.y + uCamF * bc.z;
+
+  float light = r0.w;                 // 0 = heavy clumped aggregate ... 1 = light crystal
+  float t = uFlakeT;
+  // fall speed: heavy clumps 1.35 m/s ... light crystals 0.55, x0.85-1.15 per flake, quantised to 40 bins (2.7%
+  // steps) so the CPU can integrate and lattice-wrap each bin's fall exactly; the storm factor is in the integral
+  float fk = (mix(1.35, 0.55, light) * mix(0.85, 1.15, r1.x) - FK_LO) / (FK_HI - FK_LO);
+  int fbin = int(clamp(fk * 40.0, 0.0, 39.0));
+  float fall = mix(FK_LO, FK_HI, (float(fbin) + 0.5) / 40.0) * uFallV;
+  // per-flake inertia: blend of a sluggish and a quick wind response (light flakes respond more)
+  float resp = clamp(light * 0.8 + 0.2 * r1.y, 0.0, 1.0);
+  // NB: only affine mixes of the two integrals are allowed (weights sum to 1), otherwise the
+  // CPU-side lattice wrap of uDispA/uDispB would make flakes jump.
+  vec3 wdisp = mix(uDispA, uDispB, resp);
+  vec3 wvel = mix(uWindA, uWindB, resp);
+  // turbulence: travelling sine eddies over (base position, time) -> coherent yet never lockstep
+  // (rates 16, 25, 11 x W0 = 0.84, 1.31, 0.58 rad/s; the 2.08 / 1.6875 harmonics keep integer multiples)
+  float ta = mix(0.16, 1.7, uStorm);
+  vec3 ph = bw * vec3(0.37, 0.29, 0.33);
+  float a1 = ph.x + ph.y * 0.7 + 16.0 * W0 * t, a2 = ph.z - ph.x * 0.6 + 25.0 * W0 * t + 2.0, a3 = ph.y + ph.z * 0.5 + 11.0 * W0 * t + 4.0;
+  float tv = mix(0.6, 1.3, uStorm);   // updrafts / downdrafts in gusts
+  vec3 turb = ta * vec3(sin(a1) + 0.5 * sin(2.08 * a2), tv * sin(a3), sin(a2) + 0.5 * sin(1.6875 * a1 + 1.0));
+  vec3 turbV = ta * W0 * vec3(16.0 * cos(a1) + 26.0 * cos(2.08 * a2), tv * 11.0 * cos(a3), 25.0 * cos(a2) + 13.5 * cos(1.6875 * a1 + 1.0));
+  // flutter: per-flake helical wobble 0.5-2 Hz (60..240 cycles per TW)
+  float fw = floor(mix(60.0, 240.0, r1.z) + 0.5) * W0;
+  float fr = mix(0.012, 0.1, light) * (1.0 + 0.8 * uStorm);
+  float fph = fw * t + r1.w * 6.2831853;
+  vec3 flut = fr * vec3(cos(fph), 0.4 * sin(2.0 * fph), sin(fph));
+  vec3 flutV = fr * fw * vec3(-sin(fph), 0.8 * cos(2.0 * fph), cos(fph));
+
+  vec3 pw = bw + wdisp + uFallQ[fbin] + turb + flut;
+  // wrap inside the camera-aligned slice box -> constant density, no CPU work
+  vec3 qc = vec3(dot(pw, uCamR), dot(pw, uCamU), dot(pw, uCamF));
+  qc = mod(qc + halfB, 2.0 * halfB) - halfB;
+  vec3 cs = qc + cen;
+  vec3 vel = wvel + vec3(0.0, -fall, 0.0) + turbV + flutV;
+  vec3 vc = vec3(dot(vel, uCamR), dot(vel, uCamU), dot(vel, uCamF));
+
+  float zc = cs.z;
+  float wz = smoothstep(z0, z0 + uSlice.z, zc) * (1.0 - smoothstep(z1 - uSlice.z, z1, zc));
+  vec2 ndc = vec2(cs.x / (zc * uTanH * uAspect), cs.y / (zc * uTanH));
+  vec2 sv = vec2((vc.x * zc - cs.x * vc.z) / (zc * zc * uTanH * uAspect), (vc.y * zc - cs.y * vc.z) / (zc * zc * uTanH)) * 0.5 * uRes;
+
+  // local push / swirl around the cursor (screen space): each recent mouse segment drags nearby
+  // flakes along its motion and adds a counter-rotating vortex pair (a wake), easing out over ~3 s.
+  // The time derivative of the same field (d/dt of each segment's envelope) is added to the screen
+  // velocity, so a sweep streaks the flakes it moves (motion blur along the wake) instead of only
+  // displacing them.
+  if (uMn > 0) {
+    vec2 asp = vec2(uAspect, 1.0);
+    vec2 push = vec2(0.0), pushV = vec2(0.0);
+    for (int i = 0; i < 32; i++) {
+      if (i >= uMn) break;
+      vec4 m = uMs[i];
+      float age = uMa[i];
+      vec2 d = (ndc - m.xy) * asp;
+      float fo = exp(-dot(d, d) * 12.0);
+      vec2 mv = m.zw * asp;
+      float side = sign(d.x * mv.y - d.y * mv.x);
+      vec2 f = (mv * 1.25 + vec2(-d.y, d.x) * side * length(mv) * 3.6) * fo;
+      push += f * pushProf(age);
+      pushV += f * (pushProf(age) - pushProf(max(age - 0.04, 0.0))) * 25.0;   // ndc / s
+    }
+    float pwgt = mix(1.0, 0.3, smoothstep(3.0, 60.0, zc));
+    ndc += push / asp * pwgt;
+    // streak: the envelope's rate (x5, a hand-sweep gust streaks more than the bare displacement rate)
+    // plus the wake itself read as a local wind, so flakes inside it stay streaked while it fades
+    sv += (pushV * 5.0 + push * 14.0) / asp * pwgt * 0.5 * uRes;
+  }
+
+  // size / type per layer
+  float type, size, baseA;
+  if (uLayer == 0) { size = mix(0.006, 0.014, r2.x); type = 0.0; baseA = 0.9; }
+  else if (uLayer == 1 || uLayer == 4) {
+    // 1 dendrite, 2 plate, 3 aggregate. Most big real flakes are clumps: ~40% single crystals, 60% aggregates
+    type = light > 0.6 ? (r2.y > 0.38 ? 1.0 : 2.0) : 3.0;
+    size = type == 3.0 ? mix(0.032, 0.078, r2.x * r2.x) : mix(0.03, 0.068, r2.x);   // crystals: 15-35 px over 2.3-4.5 m
+    // hero tier (0.9-2.4 m, inside the depth of field): 10-50 px radius, sharp
+    if (uLayer == 4) size = type == 3.0 ? mix(0.04, 0.075, r2.x) : mix(0.035, 0.07, r2.x);
+    baseA = 0.92;
+  } else if (uLayer == 2) { size = mix(0.014, 0.036, r2.x); type = 4.0; baseA = 0.85; }
+  else { size = mix(0.012, 0.028, r2.x); type = 5.0; baseA = 0.85; }
+  float rTrue = 0.5 * size / max(zc, 0.05) * uFocalPx;
+  float speed = length(sv);
+  float blur = speed * uExpo;
+  vec2 dir = speed > 1e-3 ? sv / speed : vec2(0.0, -1.0);
+  float coc = uCocK * max(0.0, 1.0 / max(zc, 0.05) - 1.0 / uFocus);
+  float rD, aa, a = baseA;
+  float blurMix = 0.0;
+  if (uLayer == 0) {
+    // near bokeh tier: soft discs (capped so the nearest never become lens dirt), faint but readable;
+    // the streak is capped too: a near smear longer than this is invisible and only costs fill rate
+    coc = min(coc, 60.0 * uRes.y / 1080.0);
+    blur = min(blur, 100.0 * uRes.y / 1080.0);
+    rD = max(rTrue, coc) + 0.5; aa = 0.45; blurMix = 1.0;
+    a *= clamp(sq(rTrue / rD) * 5.0, 0.25, 0.45);    // the few near discs read as bright flakes, not smudges
+  } else if (uLayer == 1 || uLayer == 4) {
+    // defocus: the crystal keeps its true radius and its edge ramp widens by the circle of confusion
+    // (energy is spread, not removed); the quad grows by coc to hold the blurred outline
+    rD = rTrue + coc;
+    aa = (0.9 + 0.6 * coc) / max(rTrue, 0.5);
+    blurMix = sat(coc / max(rTrue, 0.5));
+    a *= mix(1.0, 0.45, smoothstep(0.0, 0.8, blurMix));     // out-of-focus ice reads ghostly
+  }
+  else { rD = max(rTrue, 1.2); aa = 0.0; a *= min(1.0, sq(rTrue / rD) * 1.6); }   // 1.2 px floor: no 1-px film scratches
+  if (uLayer != 1 && uLayer != 4) a *= max((2.0 * rD) / (2.0 * rD + blur), uLayer == 0 ? 0.25 : 0.0);
+  if (uLayer == 3) a *= 1.0 - 0.6 * uStorm;
+  if (uLayer == 2) a *= 1.0 - 0.35 * uStorm;
+  // blizzard: thin the uniform fine streaks over the sky (upper third) so it is not a flat scratched field
+  if (uLayer == 2 || uLayer == 3) a *= 1.0 - 0.45 * uStorm * smoothstep(0.1, 0.6, ndc.y);
+  if (uLayer == 4 || uLayer == 0) a *= 1.0 - 0.3 * uStorm;       // keep a few big flakes whipping past the lens
+  // blizzard gust sheets: a slow screen-space noise modulates the density of the streak tiers, so the curtain has
+  // banks and gaps drifting with the gale instead of a uniform hatch. The scroll rate is 256/TW units/s, one full
+  // noise period per clock wrap, so the sheet never jumps (the 2nd octave scrolls at an integer multiple)
+  if (uLayer != 0 && uLayer != 4) {
+    vec2 gq = vec2(ndc.x * uAspect, ndc.y) * 2.2 + vec2(2.1333333, 0.0) * t;
+    float gs = tnoise(gq) * 0.6 + tnoise(gq * 2.0 + 7.0) * 0.4;
+    a *= mix(1.0, 0.3 + 1.4 * smoothstep(0.3, 0.7, gs), uStorm);
+  }
+  a *= wz * clamp(uCount - float(id), 0.0, 1.0);
+
+  // rotation, tumble (squash) and sparkle: rates snapped to the W0 grid (steps of 0.05 rad/s); the tumble
+  // speeds up in a storm, so it runs on the storm-weighted clock uTumT
+  float ang = r2.z * 6.2831853 + floor((r1.y - 0.5) * 2.2 * (0.3 + light) / W0 + 0.5) * W0 * t;
+  float tum = r2.w * 6.2831853 + floor(mix(0.5, 2.6, r1.z) / W0 + 0.5) * W0 * uTumT;
+  // tumble as a rocking wobble: crystals swing from face-on down to 0.3 (a perfect face-on star is a moment,
+  // not the norm); clumps stay roundish; defocus rounds everything back to a disc
+  float squash = mix(1.0 - (type == 3.0 ? 0.35 : 0.7) * sq(0.5 - 0.5 * cos(tum)), 1.0, blurMix);
+  float rel = atan(dir.y, dir.x) - ang;
+
+  vec3 pW = uCamPos + uCamR * cs.x + uCamU * cs.y + uCamF * cs.z;
+  float dist = length(cs);
+  vec3 V = (pW - uCamPos) / dist;
+  float mu = dot(V, uSunDir);
+  float g = 0.62;
+  float hg = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;       // forward scattering
+  float facing = abs(cos(tum));
+  // sunlit ice: bright white front-lit body (cloud shadow only partly dims it: flakes are lit by the
+  // whole sky), plus tumble glints when a facet swings through the mirror direction
+  // (in a whiteout a flake is lit from the whole sphere, the ground only from above: streaks sit above the snow)
+  vec3 col = uSunCol * (0.36 + 0.28 * facing + hg) * mix(1.0, cloudShadow(pW), 0.6) + uSkyAmb * mix(1.0, 2.5, uStorm);
+  if (uLayer == 1 || uLayer == 4) {
+    float glint = pow(max(cos(tum * 2.0 + r0.x * 6.2831853), 0.0), 160.0) * step(0.5, r2.y);
+    col += uSunCol * glint * (type == 3.0 ? 0.9 : (uLayer == 4 ? 1.2 : 1.6)) * (1.0 - uStorm * 0.85);
+  } else if (uLayer == 2) {
+    // mid-distance twinkles: a quarter of the tier flashes briefly as it tumbles through the sun -> a field of
+    // small sparkles rather than one clipped flare
+    float tw = pow(max(cos(tum * 2.0 + r0.x * 6.2831853), 0.0), 90.0) * step(0.75, r2.y);
+    col += uSunCol * tw * 2.2 * (1.0 - uStorm * 0.85);
+  }
+  // per-flake brightness: real flakes are not all the same white. The crystal tiers spread 0.55-1.1, skewed
+  // dim (and thin light crystals are the most translucent), so a bright one stands out as a hero; the far end
+  // of the mid tier is dimmer than its near end, a depth cue the fog alone is too weak to give at 2-9 m
+  float bri = (uLayer == 1 || uLayer == 4) ? mix(0.55, 1.1, r1.w * r1.w) * mix(1.0, 0.8, light) : mix(0.7, 1.1, r1.w);
+  if (uLayer == 1) bri *= mix(1.0, 0.72, smoothstep(2.5, 9.0, zc));
+  bri = mix(bri, 0.5 + 0.5 * bri, uStorm);      // a dim streak is lost in the whiteout: narrower spread in a blizzard
+  col *= bri;
+  vec4 fg = fogAt(dist, V);
+  col = col * fg.a + fg.rgb;
+
+  if (zc < 0.08 || abs(ndc.x) > 1.12 || abs(ndc.y) > 1.12 || a < 0.0015) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+
+  float hl = rD + 0.5 * blur + 1.2, hw = rD + 1.2;
+  vec2 perp = vec2(-dir.y, dir.x);
+  vec2 offPx = dir * corner.x * hl + perp * corner.y * hw;
+  gl_Position = vec4(ndc + offPx / (0.5 * uRes), 0.0, 1.0);
+  vP = vec2(corner.x * hl, corner.y * hw);
+  vSeed = r1.wzyx * 0.7 + r2.yxwz * 0.3;
+  vPar = vec4(rD, blur, type, aa);
+  vRot = vec4(cos(rel), sin(rel), squash, rTrue);
+  vCol = vec4(col, a);
+  vDist = dist;
+}
+`;
+
+const FS_FLAKE = `#version 300 es
+precision highp float; precision highp int;
+${GBUF}
+uniform vec2 uRes;
+uniform int uLayer;
+uniform float uCover, uStorm;
+in vec2 vP;
+flat in vec4 vSeed;
+flat in vec4 vPar;
+flat in vec4 vRot;
+in vec4 vCol;
+in float vDist;
+out vec4 o;
+
+float sq(float x) { return x * x; }
+float sdSeg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0); return length(pa - ba * h); }
+// fold the plane into one 30-degree wedge: 6-fold rotational + mirror symmetry of ice crystals
+vec2 foldD6(vec2 q) {
+  float r = length(q);
+  float a = atan(q.y, q.x);
+  a = abs(mod(a + 0.5235988, 1.0471976) - 0.5235988);
+  return r * vec2(cos(a), sin(a));
+}
+// stellar dendrite: tapered main arm with side branches at 60 degrees, hexagonal core with an inner
+// ring. Two seed-driven variants: A keeps its branches inside the wedge (neighbouring arms never
+// touch) and adds one branchlet per branch on big sharp flakes; B is fern-like with five tapered
+// branches whose mirrored copies meet between the arms (the textbook 'Christmas star').
+float dendrite(vec2 q, vec4 s, float aa) {
+  if (dot(q, q) > sq(1.06 + aa)) return 0.0;
+  vec2 p = foldD6(q);
+  bool fern = s.z > 0.5 && aa < 0.06;                        // fern only when its branches resolve (r > ~15 px)
+  float w = max(mix(0.04, 0.075, s.x), 0.9 * aa);          // never thinner than ~1 px (no aliasing)
+  float d = sdSeg(p, vec2(0.0), vec2(0.92, 0.0)) - w * (1.0 - 0.45 * p.x);
+  bool fine = !fern && aa < 0.045;                           // branchlets only on big, sharp flakes (r > ~20 px)
+  vec2 bd = vec2(0.5, 0.8660254);
+  float sz = fract(s.z * 2.0);
+  float b0 = mix(0.2, 0.32, s.y), bs = fern ? mix(0.13, 0.21, sz) : mix(0.13, 0.17, sz);
+  bs = max(bs, 3.5 * aa);                                    // side branches need ~3.5 px of spacing to read
+  float bl = mix(0.4, 0.7, fract(s.w * 5.3));
+  for (int k = 0; k < 5; k++) {
+    float fk = float(k);
+    float x = b0 + fk * bs;
+    if (x > (fern ? 0.9 : 0.86) || (!fern && k == 4)) break;
+    float L = fern ? (0.97 - x) * bl : min((0.97 - x) * mix(0.55, 0.95, fract(s.w * 3.7 + fk * 0.31)), x * 0.9);
+    vec2 a0 = vec2(x, 0.0), a1 = a0 + bd * L;
+    float tt = clamp(dot(p - a0, bd) / max(L, 1e-3), 0.0, 1.0);                       // taper along the branch
+    d = min(d, sdSeg(p, a0, a1) - max(w * (fern ? 0.72 * (1.0 - 0.55 * tt) : 0.62), 0.8 * aa));
+    if (fine) {   // one branchlet parallel to the main arm, sprouting from the branch midpoint
+      vec2 m = a0 + bd * (L * 0.5);
+      d = min(d, sdSeg(p, m, m + vec2(L * 0.3, 0.0)) - max(w * 0.5, 0.8 * aa));
+    }
+  }
+  float hexd = dot(p, vec2(0.8660254, 0.5));
+  float core = mix(0.09, 0.2, s.w);
+  d = min(d, hexd - core);
+  float c = 1.0 - smoothstep(-aa, aa, d);
+  float rim = smoothstep(-min(w * 0.9, 0.035) - aa, 0.0, d);               // edges catch the light (a thin line on wide arms)
+  float ridge = 1.0 - smoothstep(0.0, 0.025 + aa, p.y);
+  float ring = 1.0 - smoothstep(0.0, 0.02 + aa, abs(hexd - core * 0.6));
+  // translucent body (0.42) under bright rims / ridges / ring, so the interior structure survives tone mapping
+  return c * (0.42 + 0.5 * rim + 0.3 * ridge + 0.2 * ring);
+}
+// hexagonal / stellar plate with ridges, an inner hexagon line and bright rims
+float plate(vec2 q, vec4 s, float aa) {
+  if (dot(q, q) > sq(1.06 + aa)) return 0.0;
+  vec2 p = foldD6(q);
+  float R = mix(0.62, 0.92, s.x);
+  float hexd = dot(p, vec2(0.8660254, 0.5));
+  float d;
+  if (s.y > 0.45) {   // stellar plate: broad arms widening toward the tip
+    float wArm = 0.07 + 0.2 * smoothstep(0.3, 0.95, p.x / R);
+    d = min(max(p.y - wArm * R, p.x - R), hexd - 0.3 * R);
+  } else d = hexd - R * 0.8660254;
+  float c = 1.0 - smoothstep(-aa, aa, d);
+  float ridge = 1.0 - smoothstep(0.0, 0.025 + aa, p.y);
+  float inner = 1.0 - smoothstep(0.0, 0.025 + aa, abs(hexd - 0.4 * R));
+  float rim = smoothstep(-0.07 - aa, 0.0, d);
+  return c * (0.38 + 0.28 * ridge + 0.22 * inner + 0.5 * rim);      // translucent body, bright rim and ridges
+}
+// one small six-armed crystal used inside aggregates
+float miniStar(vec2 q, float aa) {
+  vec2 p = foldD6(q);
+  float d = sdSeg(p, vec2(0.0), vec2(0.92, 0.0)) - 0.1 * (1.0 - 0.4 * p.x);
+  d = min(d, sdSeg(p, vec2(0.5, 0.0), vec2(0.5, 0.0) + vec2(0.5, 0.866) * 0.36) - 0.07);
+  d = min(d, dot(p, vec2(0.866, 0.5)) - 0.2);
+  return 1.0 - smoothstep(-aa, aa, d);
+}
+// clumped aggregate (most large real flakes): a soft translucent lumpy core with a few
+// tumbled crystals fused into it, their arms poking out of the outline
+float aggregate(vec2 q, vec4 s, float aa) {
+  if (dot(q, q) > sq(1.06 + aa)) return 0.0;
+  uint h = floatBitsToUint(s.x * 9.71 + s.y) ^ 0x9e3779b9u;
+  float rr = length(q);
+  float ang0 = atan(q.y, q.x);
+  float lump = 0.5 + 0.09 * sin(3.0 * ang0 + s.z * 6.0) + 0.06 * sin(5.0 * ang0 + s.w * 6.0) + 0.04 * sin(8.0 * ang0 + s.x * 6.0);
+  float core = 1.0 - smoothstep(lump - 0.3 - aa, lump + aa, rr);
+  float tex = 0.75 + 0.25 * sin(q.x * 9.0 + s.z * 6.0) * sin(q.y * 8.0 + s.w * 6.0);
+  float c = core * core * 0.42 * tex;                                    // translucent, denser centre
+  for (int k = 0; k < 3; k++) {
+    h = h * 747796405u + 2891336453u;
+    uint h2 = (h >> 5u) * 2654435761u;
+    vec4 r = vec4(float(h >> 8u), float(h2 >> 8u), float((h2 * 1103515245u) >> 8u), float((h * 22695477u) >> 8u)) / 16777216.0;
+    vec2 off = (r.xy - 0.5) * 0.45;
+    float sc = mix(0.45, 0.62, r.z);
+    float an = r.w * 6.2831853;
+    vec2 qq = q - off;
+    qq = vec2(cos(an) * qq.x - sin(an) * qq.y, sin(an) * qq.x + cos(an) * qq.y) / sc;
+    qq.y /= mix(0.5, 1.0, fract(r.w * 7.3));                                 // tilted crystal
+    if (dot(qq, qq) < 1.1) c = max(c, miniStar(qq, aa / sc) * mix(0.8, 1.0, r.z));
+  }
+  return c;
+}
+float shapeAt(vec2 sp) {
+  // shape in units of the true radius; defocus widens the edge ramp (aa) and the quad (vPar.x) instead
+  vec2 q = vec2(vRot.x * sp.x - vRot.y * sp.y, vRot.y * sp.x + vRot.x * sp.y) / vRot.w;
+  q.y /= vRot.z;
+  // the tumble squash shrinks the pixel footprint along y: widen the edge ramp by the geometric mean of the
+  // two axes' scales, so an edge-on crystal softens instead of aliasing (and its fine detail switches off)
+  float aa = vPar.w * inversesqrt(max(vRot.z, 0.2));
+  if (vPar.z < 1.5) return dendrite(q, vSeed, aa);
+  if (vPar.z < 2.5) return plate(q, vSeed, aa);
+  return aggregate(q, vSeed, aa);
+}
+void main() {
+  float rPx = vPar.x, blur = vPar.y;
+  float cov;
+  if ((uLayer == 1 || uLayer == 4) && blur < min(3.5 * rPx, 28.0)) {
+    // true motion blur of the crystal shape: a box of taps along the streak at <= 1 px spacing (up to 29),
+    // so a short calm blur keeps the crystal crisp with no tap structure (coarser stratified taps with
+    // per-pixel jitter left a diagonal hatch across the big sharp flakes)
+    int taps = int(ceil(blur)) + 1;
+    float acc = 0.0;
+    for (int k = 0; k < 29; k++) {
+      if (k >= taps) break;
+      float off = ((float(k) + 0.5) / float(taps) - 0.5) * blur;
+      acc += shapeAt(vP - vec2(off, 0.0));
+    }
+    cov = acc / float(taps);
+  } else if (uLayer == 1 || uLayer == 4) {
+    // long streak: the crystal detail is smeared out anyway -> analytic soft capsule,
+    // energy-normalised against the streak length, slightly brighter core.
+    // Per-flake character so the blizzard is not a parallel hatch: width x0.6-1.4, brightness x0.6-1.2,
+    // and a ~12% subset of thin, bright, crisp streaks (small dense flakes whipping past)
+    float wv = mix(0.6, 1.4, vSeed.z), bv = mix(0.6, 1.2, vSeed.w);
+    if (fract(vSeed.y * 5.3) > 0.88) { wv *= 0.4; bv *= 1.6; }
+    vec2 q = vec2(max(abs(vP.x) - 0.5 * blur, 0.0), vP.y);
+    float d = length(q) / (rPx * 0.55 * wv);
+    float along = 1.0 - smoothstep(0.3, 0.5, abs(vP.x) / (blur + 2.0 * rPx));       // soft streak ends
+    // a flake sweeping 'blur' px covers each pixel for ~2r/blur of the exposure
+    cov = exp(-d * d * 2.0) * (0.55 + 0.45 * along) * min(1.0, 2.0 * rPx / (blur + 2.0 * rPx)) * 1.5 * bv;
+    cov *= 0.65 + 0.35 * sin(vP.x / max(rPx, 1.0) * 1.3 + vSeed.x * 40.0);        // tumbling flicker along the streak
+  } else {
+    // capsule = analytically motion-blurred disc
+    vec2 q = vec2(max(abs(vP.x) - 0.5 * blur, 0.0), vP.y);
+    float d = length(q) / rPx;
+    // near tier: a soft flat disc (no bright rim: a rimmed disc reads as a soap bubble / lens dirt)
+    if (uLayer == 0) cov = (1.0 - smoothstep(1.0 - vPar.w, 1.0, d)) * 0.85;
+    else cov = exp(-d * d * 2.3);
+  }
+  // soft occlusion against the scene (G-buffer ray distance)
+  vec2 suv = gl_FragCoord.xy / uRes;
+  float st = G0(suv).x;
+  float occ = clamp((st - vDist) / max(0.4, 0.05 * vDist), 0.0, 1.0);
+  float a = clamp(cov * vCol.a * occ, 0.0, 1.0);
+  if (a < 0.0015) discard;
+  // over snow-covered ground a thin ice crystal reads as a faint, slightly bluer translucent shadow (it transmits
+  // the sky, the sunlit snow behind it does not), otherwise white on white vanishes. Scaled by the flake's own
+  // alpha so faint flakes stay translucent rather than turning into grey stickers; in a blizzard the whiteout is
+  // grey, so only a weak cool shadow side is kept on the streaks
+  vec3 col = vCol.rgb;
+  if (st < 60000.0) {
+    float sT = G1(suv).w;
+    float snowBG = smoothstep(sT - 0.07, sT + 0.07, uCover);
+    col *= mix(vec3(1.0), vec3(0.5, 0.56, 0.68), snowBG * mix(0.55, 0.3, uStorm) * clamp(a * 2.0, 0.0, 1.0));   // over half the tint is kept in a blizzard: the streaks stay legible over snow
+  }
+  o = vec4(col * a, a);    // premultiplied alpha
+}
+`;
+
+// ------------------------------------------------------------------ bloom + composite
+const FS_DOWN = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc; uniform vec2 uSrcInv; uniform vec2 uDstRes; uniform float uThresh;
+out vec4 o;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstRes;
+  vec3 c = texture(uSrc, uv + uSrcInv * vec2(-1.0, -1.0)).rgb + texture(uSrc, uv + uSrcInv * vec2(1.0, -1.0)).rgb
+         + texture(uSrc, uv + uSrcInv * vec2(-1.0, 1.0)).rgb + texture(uSrc, uv + uSrcInv * vec2(1.0, 1.0)).rgb;
+  c *= 0.25;
+  if (uThresh > 0.0) { float l = max(c.r, max(c.g, c.b)); c *= max(l - uThresh, 0.0) / max(l, 1e-4); c = min(c, vec3(30.0)); }
+  o = vec4(c, 1.0);
+}`;
+const FS_UP = `#version 300 es
+precision highp float;
+uniform sampler2D uSrc; uniform vec2 uSrcInv; uniform vec2 uDstRes;
+out vec4 o;
+void main() {
+  vec2 uv = gl_FragCoord.xy / uDstRes;
+  vec3 c = texture(uSrc, uv).rgb * 4.0;
+  c += (texture(uSrc, uv + vec2(uSrcInv.x, 0.0)).rgb + texture(uSrc, uv - vec2(uSrcInv.x, 0.0)).rgb + texture(uSrc, uv + vec2(0.0, uSrcInv.y)).rgb + texture(uSrc, uv - vec2(0.0, uSrcInv.y)).rgb) * 2.0;
+  c += texture(uSrc, uv + uSrcInv).rgb + texture(uSrc, uv - uSrcInv).rgb + texture(uSrc, uv + vec2(uSrcInv.x, -uSrcInv.y)).rgb + texture(uSrc, uv + vec2(-uSrcInv.x, uSrcInv.y)).rgb;
+  o = vec4(c / 16.0, 1.0);
+}`;
+const FS_COMP = `#version 300 es
+precision highp float;
+${GBUF}
+uniform sampler2D uHdr, uBloom;
+uniform vec2 uRes;
+uniform float uExposure, uBloomStr, uFrame, uStorm, uCover, uTwinkleT;
+uniform vec3 uSunCol;
+out vec4 o;
+vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+float h12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+void main() {
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec3 c = texture(uHdr, uv).rgb + texture(uBloom, uv).rgb * uBloomStr;
+  // snow sparkle: 1 px sun glints flickering at per-pixel rates, added here at canvas resolution after the
+  // scene FXAA (which smeared them to faint grain), on sunlit snow and not through a whiteout
+  vec4 g0 = G0(uv);
+  if (g0.x < 60000.0 && uStorm < 0.999) {
+    float snowT = G1(uv).w;
+    float cw = mix(0.025, 0.07, smoothstep(1200.0, 2600.0, g0.x));          // same cover ramp as the shading pass
+    float snow = smoothstep(snowT - cw, snowT + cw, uCover);
+    float sp = h12(floor(gl_FragCoord.xy) + 0.5);
+    float tw = 0.5 + 0.5 * sin(uTwinkleT * (2.0 + 5.0 * fract(sp * 13.1)) + sp * 40.0);
+    float spark = step(1.0 - 0.016 * snow * snow * g0.z, fract(sp * 7.77)) * tw * smoothstep(2500.0, 150.0, g0.x) * (1.0 - uStorm);
+    c += uSunCol * spark * 2.6;
+  }
+  c *= uExposure;
+  c *= vec3(0.97, 1.0, 1.035);                       // cool, fresh white balance
+  c = aces(c);
+  c = mix(c, c * c * (3.0 - 2.0 * c), 0.2);                                     // gentle S-curve: sunlit vs shade
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, 1.0 - 0.12 * uStorm);
+  c = mix(c, c * vec3(0.96, 0.99, 1.05) + vec3(0.0, 0.004, 0.012), 0.5 * (1.0 - l));  // cool lift in the shadows
+  vec2 vq = uv - 0.5;
+  c *= 1.0 - 0.16 * smoothstep(0.25, 0.95, length(vq * vec2(1.25, 1.0)));     // vignette
+  c = pow(c, vec3(1.0 / 2.2));
+  c += (h12(gl_FragCoord.xy + fract(uFrame * 0.618) * 913.0) - 0.5) * 0.022; // film grain / dither
+  // first load: the scene is revealed row by row behind the bake's progress edge (soft over 8% of the height).
+  // Rebake after a widening resize: columns the old frame never saw stay letterboxed until the new rows reach them
+  float fade = 1.0;
+  if (uGb.z > 1.5) fade = smoothstep(uGb.y, uGb.y - 0.08, uv.y);
+  else if (uGb.z > 0.5 && uv.y >= uGb.y && abs(gbUV(uv).x - 0.5) > 0.5) fade = 0.0;
+  c = mix(vec3(0.80, 0.85, 0.90), c, fade);
+  o = vec4(c, 1.0);
+}`;
+// =====================================================================================
+//                                   GL helpers
+// =====================================================================================
+function compile(type, src, name) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(s);
+    const lines = src.split('\n');
+    const m = /ERROR: \d+:(\d+)/.exec(log);
+    const ln = m ? +m[1] : 0;
+    console.error(`[${name}] shader compile error:\n${log}\n` + lines.slice(Math.max(0, ln - 4), ln + 3).map((l, i) => (Math.max(0, ln - 4) + i + 1) + ': ' + l).join('\n'));
+    throw new Error('shader compile failed: ' + name);
+  }
+  return s;
+}
+function program(vs, fs, name) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs, name + '.vs'));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs, name + '.fs'));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.error(`[${name}] link error: ` + gl.getProgramInfoLog(p)); throw new Error('link failed: ' + name); }
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const info = gl.getActiveUniform(p, i); const nm = info.name.replace(/\[0\]$/, ''); u[nm] = gl.getUniformLocation(p, info.name); }
+  return { p, u };
+}
+function tex(w, h, ifmt, fmt, type, filter, wrap) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrap || gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrap || gl.CLAMP_TO_EDGE);
+  return t;
+}
+function rt(w, h, n, filter) {
+  const texs = [];
+  for (let i = 0; i < n; i++) texs.push(tex(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, filter));
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  texs.forEach((t, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, t, 0));
+  gl.drawBuffers(texs.map((_, i) => gl.COLOR_ATTACHMENT0 + i));
+  const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  if (st !== gl.FRAMEBUFFER_COMPLETE) console.error('framebuffer incomplete', st);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return { fbo, texs, w, h };
+}
+function freeRT(r) { if (!r) return; r.texs.forEach(t => gl.deleteTexture(t)); gl.deleteFramebuffer(r.fbo); }
+
+let P = null, noiseTex = null, compileMs = 0;
+function buildPrograms() {
+  const t0 = performance.now();
+  P = {
+    gbuf: program(VS_FULL, FS_GBUF, 'gbuf'),
+    sky: program(VS_FULL, FS_SKY, 'sky'),
+    shade: program(VS_FULL, FS_SHADE, 'shade'),
+    fxaa: program(VS_FULL, FS_FXAA, 'fxaa'),
+    flake: program(VS_FLAKE, FS_FLAKE, 'flake'),
+    down: program(VS_FULL, FS_DOWN, 'down'),
+    up: program(VS_FULL, FS_UP, 'up'),
+    comp: program(VS_FULL, FS_COMP, 'comp'),
+  };
+  compileMs = performance.now() - t0;
+  gl.bindVertexArray(gl.createVertexArray());
+}
+
+// noise texture (RGBA8 256^2): G = A(x,y), R = A(x+37, y+17)  (3D-noise trick)
+function makeNoiseTex() {
+  const N = 256, A = new Uint8Array(N * N), rnd = mulberry32(0xC0FFEE);
+  for (let i = 0; i < N * N; i++) A[i] = Math.floor(rnd() * 256);
+  const D = new Uint8Array(N * N * 4);
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = (y * N + x) * 4;
+    D[i] = A[((y + 17) & 255) * N + ((x + 37) & 255)]; D[i + 1] = A[y * N + x]; D[i + 2] = A[((y * 7 + 3) & 255) * N + ((x * 3 + 11) & 255)]; D[i + 3] = 255;
+  }
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, N, N, 0, gl.RGBA, gl.UNSIGNED_BYTE, D);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+  return t;
+}
+
+// =====================================================================================
+//                                   render targets
+// =====================================================================================
+// W,H: canvas (= G-buffer) size. Ws,Hs: the per-frame render size (shade / FXAA / flakes / bloom), W*perf.rs;
+// the composite upsamples it to the canvas. The G-buffer bake never depends on the render scale.
+// gbCur: the G-buffer being shown; gbNext: the one being baked (gbRow rows done, gbRows rows per frame, adapted to the
+// frame budget, see adaptStripe; gbMiss: a stripe frame has overrun once; bakeFrame: this frame drew a stripe);
+// gbDone: time the last stripe landed (the swap follows 0.3 s later, once the reveal edge has left the top);
+// gbAsp: new/old aspect for sampling gbCur meanwhile
+const R = { W: 0, H: 0, Ws: 0, Hs: 0, gbCur: null, gbNext: null, gbRow: 0, gbRows: 1, gbMiss: false, bakeFrame: false, gbDone: -1, gbAsp: 1,
+            scene: null, hdr: null, sky: [null, null], skyI: 0, skyReset: true, bloom: [] };
+let readyTime = -1, buildStart = 0, buildMs = 0;
+const GB_MAX_PX = 8.4e6;      // ~4K: the G-buffer is 24 B/px, and two exist during a rebake
+const GB_SINGLE_PX = 6e6;     // above this a rebake drops the old buffer first instead of holding both (~150 MB each)
+// Adaptive quality ladder, cheapest visual loss first: render scale 1 -> .87 -> .74 -> .6, then fewer cloud steps,
+// then fewer flakes. Per 90-frame window it compares the mean dt with the window's 10th-percentile dt (the display's
+// own frame period when the GPU keeps up): a slow mean that is also jittery above that floor is a GPU that cannot
+// keep up, a slow but steady cadence is a 30 Hz display or a throttled tab and is left alone. A rung down is followed
+// by two windows of cooldown; a run of windows at the display's cadence steps back up (the run required doubles after
+// each step down, so a machine on the edge does not flap), so a transient blizzard cannot pin the calm scene low.
+const PERF_RS = [1, 0.87, 0.74, 0.6];
+const PERF_WIN = 90;
+const perf = { level: 0, rs: 1, skySteps: 36, flakeMul: 1, n: 0, cool: 0, good: 0, goodNeed: 10, skip: 0,
+               frameMs: 1000 / 60, avgMs: 0, dts: new Float32Array(PERF_WIN) };
+function setLevel(level) {
+  perf.level = level;
+  perf.skySteps = level >= 4 ? 22 : 36;
+  perf.flakeMul = level >= 5 ? 0.7 : 1;
+  const rs = PERF_RS[Math.min(level, 3)];
+  if (rs !== perf.rs) { perf.rs = rs; allocScaled(); }
+}
+function resetPerf() {   // the GPU budget changed (new canvas size / restored context): start the ladder over
+  perf.level = 0; perf.rs = 1; perf.skySteps = 36; perf.flakeMul = 1;
+  perf.n = 0; perf.cool = 0; perf.good = 0; perf.skip = 2;
+}
+function allocate() {
+  let dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+  const px = innerWidth * innerHeight * dpr * dpr;
+  if (px > GB_MAX_PX) dpr *= Math.sqrt(GB_MAX_PX / px);
+  const W = Math.max(64, Math.round(innerWidth * dpr)), H = Math.max(64, Math.round(innerHeight * dpr));
+  if (W === R.W && H === R.H) return;
+  R.W = W; R.H = H; canvas.width = W; canvas.height = H;
+  freeRT(R.gbNext);
+  if (R.gbCur && W * H > GB_SINGLE_PX) { freeRT(R.gbCur); R.gbCur = null; }
+  R.gbAsp = R.gbCur ? (W / H) / (R.gbCur.w / R.gbCur.h) : 1;
+  R.gbNext = rt(W, H, 3, gl.NEAREST); R.gbRow = 0; R.gbRows = Math.max(1, Math.round(H / 120)); R.gbMiss = false; R.gbDone = -1;
+  buildStart = performance.now();
+  layoutLayers();
+  resetPerf();
+  allocScaled();
+  armDprWatch();
+}
+// Stripe budget, from the wall dt of the frame that drew the previous stripe (the browser queues GPU work a frame or
+// two deep, so the feedback lags that much; growth is slow enough not to overshoot far). The stripe grows while its
+// frame stays inside the limit and shrinks hard when it overruns (then grows gently). First load, with nothing else
+// to show: frames up to 34 ms (a 30 Hz display's own frames pass; the reveal takes ~1-2 s on an M-series GPU).
+// Rebake behind a live scene: the frame must stay close to the display's own frame period (perf.frameMs)
+function adaptStripe(dt) {
+  const base = perf.frameMs / 1000;
+  const limit = R.gbCur ? Math.max(1.35 * base, base + 0.006) : 0.034;
+  if (dt > limit) { R.gbRows = Math.max(1, Math.floor(R.gbRows * 0.6)); R.gbMiss = true; }
+  else R.gbRows = Math.min(Math.ceil(R.gbRows * (R.gbMiss ? 1.03 : 1.15)), Math.ceil(R.H / 6));
+}
+function allocScaled() {
+  const W = Math.max(64, Math.round(R.W * perf.rs)), H = Math.max(64, Math.round(R.H * perf.rs));
+  R.Ws = W; R.Hs = H;
+  freeRT(R.scene); freeRT(R.hdr);
+  R.scene = rt(W, H, 1, gl.LINEAR); R.hdr = rt(W, H, 1, gl.LINEAR);
+  freeRT(R.sky[0]); freeRT(R.sky[1]);
+  const sw = Math.ceil(W / 2), sh = Math.ceil(H / 2);
+  R.sky = [rt(sw, sh, 2, gl.LINEAR), rt(sw, sh, 2, gl.LINEAR)]; R.skyReset = true;
+  R.bloom.forEach(freeRT); R.bloom = [];
+  let bw = Math.ceil(W / 2), bh = Math.ceil(H / 2);
+  for (let i = 0; i < 6 && bw >= 8 && bh >= 8; i++) { R.bloom.push(rt(bw, bh, 1, gl.LINEAR)); bw = Math.ceil(bw / 2); bh = Math.ceil(bh / 2); }
+}
+let resizeTimer = 0;
+function scheduleAllocate() { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!ctxLost) allocate(); }, 150); }
+addEventListener('resize', scheduleAllocate);
+// a window dragged to a display with another pixel density fires no resize: watch the dppx media query instead
+let dprMQ = null;
+function armDprWatch() {
+  if (dprMQ) dprMQ.removeEventListener('change', scheduleAllocate);
+  dprMQ = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+  dprMQ.addEventListener('change', scheduleAllocate);
+}
+
+// ------------------------------------------------------------------ context loss / restore
+let ctxLost = false;
+function initGL() {
+  getExtensions();
+  buildPrograms();
+  noiseTex = makeNoiseTex();
+  // every GL handle died with the old context: forget them (deleting would be a no-op) and rebuild, restarting the
+  // striped bake; readyTime is cleared so the scene reveals itself again instead of hard-cutting in
+  R.W = R.H = 0; R.gbCur = R.gbNext = R.scene = R.hdr = null; R.sky = [null, null]; R.bloom = []; R.skyI = 0;
+  readyTime = -1;
+  allocate();
+}
+canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); ctxLost = true; showErr('그래픽 장치 연결이 끊어졌습니다. 복구를 기다리는 중…'); });
+canvas.addEventListener('webglcontextrestored', () => {
+  try { initGL(); } catch (e) { fatal('그래픽 장치 복구 실패: ' + e.message); }
+  ctxLost = false; hideErr();
+});
+
+// =====================================================================================
+//                                   simulation state
+// =====================================================================================
+// flake layers (camera-space depth slices). counts at density x1; max = hard cap
+const LAYERS = [
+  // storm: per-layer density multiplier at full blizzard (total flake count ends up > x6)
+  { id: 3, z0: 26, z1: 240, fade: 22, base: 46000, max: 125000, storm: 6.5 },
+  { id: 2, z0: 8, z1: 30, fade: 4, base: 12000, max: 50000, storm: 4.5 },
+  { id: 1, z0: 2.3, z1: 9.0, fade: 0.9, base: 2500, max: 14000, storm: 3.2 },
+  { id: 4, z0: 0.9, z1: 2.4, fade: 0.3, base: 36, max: 220, storm: 1.7 },     // hero crystals (sparse, in focus)
+  { id: 0, z0: 0.25, z1: 0.8, fade: 0.15, base: 20, max: 140, storm: 2.0 },   // near bokeh discs (~3 on screen)
+];
+const NB = 40, FK_LO = 0.4675, FK_HI = 1.5525;        // fall-speed bins (must match VS_FLAKE)
+for (const L of LAYERS) { L.hx = 0; L.hy = 0; L.dA = new Float32Array(3); L.dB = new Float32Array(3); L.fall = new Float32Array(3 * NB); }
+function layoutLayers() {
+  const asp = R.W / R.H;
+  for (const L of LAYERS) { L.hx = L.z1 * TANH * asp * 1.1 + 0.3; L.hy = L.z1 * TANH * 1.1 + 0.3; }
+}
+
+const sim = {
+  time: 0, coverage: 0, amount: 0.5, auto: STORM_Q !== '0', forced: STORM_Q === '1' ? 1 : null,
+  // the three storm envelopes (see stormEnv): storm = the snow curtain, sky = the overcast / gale front that
+  // leads and outlasts it, tail = residual thinning snow after the curtain opens; heading = gale direction offset
+  storm: 0, sky: 0, tail: 0, heading: 0,
+  storms: [], windA: [0, 0, 0], windB: [0, 0, 0], dispA: [0, 0, 0], dispB: [0, 0, 0], cloud: [0, 0],
+  gust: 0, bias: 0, flakeCount: 0, fps: 60, baseWind: [0.9, 0, 0.35], white: 0, wall: 0,
+  melt: null, meltFrom: 0,   // 쌓인 눈 초기화: coverage eases from meltFrom to 0 over 1.5 s (melt = elapsed s, null when idle)
+  // integrals that drive the shaders instead of raw time (see VS_FLAKE / FS_SHADE): fall factor, tumble rate,
+  // tree-sway phase, veil-noise scroll (x,y: streak sheets; z,w: the slow sheet)
+  fallI: 0, tumI: 0, swayPh: 0, veilI: [0, 0, 0, 0],
+};
+if (WIND_Q.length === 2 && WIND_Q.every(isFinite)) sim.baseWind = [WIND_Q[0], 0, WIND_Q[1]];
+
+// deterministic blizzard schedule from the seed, generated lazily (unbounded). The first front arrives after
+// ~2.5-3.3 min of sunny meadow; each event has its own intensity (0.6 light snowstorm .. 1 total whiteout),
+// gale heading (+-35 deg off the prevailing line) and clearing tail, and a calm of 2.5-5 min follows it
+const schedRnd = mulberry32(SEED * 7919 + 13);
+let schedNext = 150 + schedRnd() * 50, firstStorm = true;
+function ensureSchedule(t) {
+  while (schedNext < t + 600) {
+    const dur = 90 + schedRnd() * 50, ramp = 25 + schedRnd() * 10;
+    const tail = 35 + schedRnd() * 25, intensity = 0.6 + schedRnd() * 0.4, heading = (schedRnd() - 0.5) * 1.2;
+    sim.storms.push({ start: schedNext, dur, ramp, tail, intensity: firstStorm ? 1 : intensity, heading });   // the first front is always a full whiteout
+    firstStorm = false;
+    schedNext += dur + 150 + schedRnd() * 150;
+  }
+  let k = 0;   // drop storms whose clearing has ended (in place)
+  for (let i = 0; i < sim.storms.length; i++) { const s = sim.storms[i]; if (s.start + s.dur + 2 * s.tail >= t) sim.storms[k++] = s; }
+  sim.storms.length = k;
+}
+// A front is staged. Three envelopes per event: `sky` (cloud deck, sun dim, gale) rises over the whole ramp and
+// clears slowly (ramp/2 + 1.6 tail after the snow stops); `storm` (the curtain: flake density, extinction, veil)
+// lags, rising over the last 65% of the ramp and thinning over the last ramp of the event; `tail` is the
+// residual: a faint extinction + veil floor that decays over `tail` s after the curtain opens, so the peaks
+// re-emerge through thinning snow instead of a cross-fade
+function stormEnv(t) {
+  ensureSchedule(t);
+  let cur = 0, sky = 0, tail = 0, hx = 0, hz = 0;
+  for (const s of sim.storms) {
+    if (!s.manual && !sim.auto) continue;
+    const end = s.start + s.dur;
+    if (t < s.start || t > end + 2 * s.tail) continue;
+    const skyE = Math.min(smooth(s.start, s.start + s.ramp, t), 1 - smooth(end - 0.5 * s.ramp, end + 1.6 * s.tail, t)) * Math.sqrt(s.intensity);
+    const curIn = smooth(s.start + 0.35 * s.ramp, s.start + s.ramp, t);
+    const curE = Math.min(curIn, 1 - smooth(end - s.ramp, end, t)) * s.intensity;
+    const tailE = curIn * (1 - smooth(end - 0.3 * s.ramp, end + s.tail, t)) * s.intensity;
+    cur = Math.max(cur, curE); sky = Math.max(sky, skyE); tail = Math.max(tail, tailE);
+    hx += skyE * Math.cos(s.heading); hz += skyE * Math.sin(s.heading);
+  }
+  sim.storm = cur; sim.sky = sky; sim.tail = tail;
+  sim.heading = (hx * hx + hz * hz) > 1e-6 ? Math.atan2(hz, hx) : 0;
+}
+// sets sim.storm / sky / tail / heading for time t and returns the curtain value
+function stormAt(t) {
+  if (sim.forced !== null) { sim.storm = sim.sky = sim.forced; sim.tail = 0; sim.heading = 0; }
+  else stormEnv(t);
+  return sim.storm;
+}
+const amountMul = () => 0.2 + 1.6 * sim.amount;
+// accumulation: constant rate dc/dt = 1/300 per s in calm (x5 in a blizzard) * amount -> ~5 min to full
+// cover with the patchy era (meadow thresholds ~0.15..0.95) lasting minutes instead of front-loading
+function accumulate(c, s, dt) { return Math.min(1, c + (1 / 300) * (1 + 4 * s) * amountMul() * dt); }
+// storm whiteout: the plateau sits at ~86% and only gust peaks (a slow beat of two sines) push it to 100%,
+// so the far ridges stay as faint silhouettes most of the time and dissolve/re-emerge with the gusts
+function gustPeak(t) { return smooth(0.62, 1.0, 0.5 + 0.5 * (0.6 * Math.sin(t * 0.23 + 2.5) + 0.4 * Math.sin(t * 0.41 + 4.0))); }
+function whiteoutAt(s, t) { return s * (0.86 + 0.14 * gustPeak(t)); }
+
+// fast-forward for ?t= (called once the frame-loop state exists): cover, the shader clocks and the wind / cloud
+// integrals, with the scheduled gales included, so ?t=7200 lands on the cloud field a two-hour live run reaches
+function fastForward() {
+  let c = 0;
+  for (let t = 0; t < T0; t += 0.25) {
+    const s = stormAt(t), d = Math.min(0.25, T0 - t);
+    c = accumulate(c, s, d);
+    sim.fallI += (1 + 0.9 * s) * d; sim.tumI += (1 + 0.8 * s) * d;
+    windTarget(t, 0);                          // the wind follows its target within ~1 s: close enough at this step
+    for (let i = 0; i < 3; i++) { sim.windA[i] = sim.windB[i] = target[i]; sim.dispA[i] += target[i] * d; }
+    sim.cloud[0] += (target[0] * 3 + 3) * d; sim.cloud[1] += (target[2] * 3 + 1) * d;
+  }
+  sim.coverage = c; sim.time = T0;
+  if (COVER_Q !== null) sim.coverage = COVER_Q;
+  if (T0 === 0) { sim.windA = [...sim.baseWind]; sim.windB = [...sim.baseWind]; }
+  sim.dispB = [...sim.dispA];
+}
+const holdCoverage = COVER_Q !== null && STORM_Q === '0';
+
+// ------------------------------------------------------------------ mouse wind
+const mouse = { inside: false, x: 0, y: 0, lx: null, ly: null, lt: 0, vx: 0, accX: 0, accY: 0, segT: 0, segs: [], lastMove: 0 };
+addEventListener('pointermove', e => {
+  const now = performance.now() / 1000;
+  mouse.lastMove = sim.wall;
+  if (e.target && e.target.closest && e.target.closest('#icon, #pop')) { mouse.lx = null; return; }   // the chrome never makes wind
+  const W = innerWidth, H = innerHeight;
+  mouse.inside = true;
+  mouse.x = e.clientX / W * 2 - 1; mouse.y = 1 - e.clientY / H * 2;
+  if (mouse.lx !== null) {
+    const dx = e.clientX - mouse.lx, dy = e.clientY - mouse.ly, dtE = Math.max(now - mouse.lt, 0.004);
+    const vInst = dx / dtE;
+    mouse.vx = lerp(mouse.vx, vInst, 0.35);
+    mouse.accX += dx / W * 2; mouse.accY += -dy / H * 2;
+    if (now - mouse.segT > 0.035) {
+      if (Math.hypot(mouse.accX, mouse.accY) > 1e-4) {
+        mouse.segs.push({ x: mouse.x, y: mouse.y, dx: mouse.accX, dy: mouse.accY, t: sim.wall });
+        if (mouse.segs.length > 32) mouse.segs.shift();
+      }
+      mouse.accX = 0; mouse.accY = 0; mouse.segT = now;
+    }
+  }
+  mouse.lx = e.clientX; mouse.ly = e.clientY; mouse.lt = now;
+}, { passive: true });
+addEventListener('mouseout', e => { if (!e.relatedTarget) { mouse.inside = false; mouse.lx = null; } });
+addEventListener('blur', () => { mouse.inside = false; mouse.lx = null; });
+function pruneSegs() {   // drop wake segments older than their envelope, in place
+  let k = 0;
+  for (let i = 0; i < mouse.segs.length; i++) if (sim.wall - mouse.segs[i].t < 3.6) mouse.segs[k++] = mouse.segs[i];
+  mouse.segs.length = k;
+}
+
+// ------------------------------------------------------------------ UI: one icon, a pop-over, a hint
+function triggerBlizzard(dur = 100) {
+  const now = sim.time;
+  sim.forced = null;
+  // push scheduled storms that would overlap out of the way
+  sim.storms = sim.storms.filter(s => s.manual || s.start + s.dur + 2 * s.tail < now || s.start > now + dur + 150);
+  sim.storms.push({ start: now, dur, ramp: 25, tail: 45, intensity: 1, heading: 0, manual: true });
+  sim.storms.sort((a, b) => a.start - b.start);
+}
+// open: pop-over shown; last: time of the last interaction with it (it closes after 6 s idle, unless the pointer
+// rests on it: hover); busy: the 폭설 button's feedback timer
+const ui = {
+  icon: null, pop: null, hint: null, amount: null, amountV: null, auto: null, open: false, hover: false, last: 0, busy: 0,
+  touch() { ui.last = sim.wall; },
+  show() { ui.open = true; ui.pop.classList.add('open'); ui.icon.classList.add('open'); ui.icon.setAttribute('aria-expanded', 'true'); ui.touch(); },
+  close() { ui.open = false; ui.pop.classList.remove('open'); ui.icon.classList.remove('open'); ui.icon.setAttribute('aria-expanded', 'false'); },
+};
+if (SHOW_UI) {
+  const $ = id => document.getElementById(id);
+  ui.icon = $('icon'); ui.pop = $('pop'); ui.hint = $('hint'); ui.amount = $('amount'); ui.amountV = $('amountv'); ui.auto = $('auto');
+  const toggle = () => { if (ui.open) ui.close(); else ui.show(); };
+  ui.icon.addEventListener('click', toggle);
+  ui.icon.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  for (const ev of ['pointermove', 'pointerdown', 'input', 'click']) ui.pop.addEventListener(ev, ui.touch);
+  ui.pop.addEventListener('pointerenter', () => { ui.hover = true; });
+  ui.pop.addEventListener('pointerleave', () => { ui.hover = false; ui.touch(); });
+  document.addEventListener('pointerdown', e => { if (ui.open && !ui.pop.contains(e.target) && !ui.icon.contains(e.target)) ui.close(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && ui.open) { ui.close(); ui.icon.focus(); } });
+  ui.amount.addEventListener('input', () => { sim.amount = +ui.amount.value; syncUI(); });
+  ui.auto.addEventListener('change', () => { sim.auto = ui.auto.checked; });
+  const bliz = $('blizzard');
+  bliz.addEventListener('click', () => {
+    if (ui.busy) return;
+    triggerBlizzard();
+    bliz.classList.add('busy'); bliz.textContent = '폭설 오는 중…';
+    ui.busy = setTimeout(() => { bliz.classList.remove('busy'); bliz.textContent = '폭설 일으키기'; ui.busy = 0; }, 8000);
+  });
+  $('reset').addEventListener('click', () => { sim.meltFrom = sim.coverage; sim.melt = 0; });   // eased in update()
+} else for (const id of ['icon', 'pop', 'hint']) document.getElementById(id).remove();
+function syncUI() {
+  if (!ui.pop) return;
+  ui.amount.value = sim.amount; ui.amountV.textContent = Math.round(sim.amount * 100) + '%'; ui.auto.checked = sim.auto;
+  ui.amount.style.setProperty('--p', (sim.amount * 100).toFixed(1) + '%');   // filled part of the two-tone track
+}
+syncUI();
+function updateUI() {
+  if (!ui.icon || frameNo % 6) return;
+  if (ui.open && !ui.hover && sim.wall - ui.last > 6) ui.close();
+  ui.icon.classList.toggle('idle', !ui.open && sim.wall - mouse.lastMove > 4);
+  // the hint fades in once the scene is ready, out after ~5 s, then leaves the DOM; as it goes, the icon lifts
+  // for two seconds (the one moment the corner glyph announces itself)
+  if (readyTime >= 0) {
+    const since = sim.wall - readyTime;
+    if (ui.hint) {
+      if (since > 0.5 && since < 5.5) ui.hint.classList.add('on');
+      else if (since >= 5.5) { ui.hint.classList.remove('on'); if (since > 7.2) { ui.hint.remove(); ui.hint = null; } }
+    }
+    ui.icon.classList.toggle('lift', since >= 5.5 && since < 7.5);
+  }
+}
+
+window.snowSim = {
+  state: () => ({ coverage: +sim.coverage.toFixed(4), storm: +sim.storm.toFixed(4), sky: +sim.sky.toFixed(4), tail: +sim.tail.toFixed(4), windX: +((sim.windA[0] + sim.windB[0]) / 2).toFixed(3), windZ: +((sim.windA[2] + sim.windB[2]) / 2).toFixed(3),
+    flakeCount: sim.flakeCount, fps: +sim.fps.toFixed(1), ready: readyTime >= 0, amount: sim.amount, auto: sim.auto,
+    quality: perf.rs, perfLevel: perf.level, frameMs: +perf.avgMs.toFixed(1), buildMs: Math.round(buildMs), compileMs: Math.round(compileMs), res: [R.W, R.H], renderRes: [R.Ws, R.Hs] }),
+  setCoverage: v => { sim.coverage = clamp(+v || 0, 0, 1); sim.melt = null; },
+  setStorm: v => { sim.forced = (v === null || v === undefined) ? null : clamp(+v, 0, 1); stormAt(sim.time); },
+  reset: () => { sim.coverage = 0; sim.melt = null; },
+  get amount() { return sim.amount; }, set amount(v) { sim.amount = clamp(+v || 0, 0, 1); syncUI(); },
+  get auto() { return sim.auto; }, set auto(v) { sim.auto = !!v; syncUI(); },
+};
+
+// =====================================================================================
+//                                   frame loop
+// =====================================================================================
+function setCommon(u, W, H) {
+  gl.uniform2f(u.uRes, W, H);
+  gl.uniform3fv(u.uCamPos, CAM.pos); gl.uniform3fv(u.uCamR, camR); gl.uniform3fv(u.uCamU, camU); gl.uniform3fv(u.uCamF, camF);
+  gl.uniform1f(u.uTanH, TANH);
+  gl.uniform3fv(u.uSunDir, SUN);
+  // shading clock (stratus / mist drift): 512000 s is a common period of their noise scrolls (0.01, 0.004, 0.0015 x 256-periodic noise)
+  if (u.uTime) gl.uniform1f(u.uTime, sim.time % 512000);
+  if (u.uStorm) gl.uniform1f(u.uStorm, sim.storm);
+  if (u.uStormSky) gl.uniform1f(u.uStormSky, sim.sky);
+  if (u.uCover) gl.uniform1f(u.uCover, sim.coverage);
+  const L = lighting;
+  if (u.uSunCol) gl.uniform3fv(u.uSunCol, L.sun);
+  if (u.uSkyAmb) gl.uniform3fv(u.uSkyAmb, L.amb);
+  if (u.uSkyZen) gl.uniform3fv(u.uSkyZen, L.zen);
+  if (u.uSkyHor) gl.uniform3fv(u.uSkyHor, L.hor);
+  if (u.uFogCol) gl.uniform3fv(u.uFogCol, L.fog);
+  if (u.uFogP) gl.uniform4fv(u.uFogP, L.fogP);
+  // the cloud offset is never wrapped: the noise octaves it feeds have no common period, and float32 still resolves
+  // 0.06 m at 1e6 m (days of play) against noise cells of >= 130 m
+  if (u.uCloudOff) gl.uniform2f(u.uCloudOff, sim.cloud[0], sim.cloud[1]);
+  if (u.uCloudCov) gl.uniform1f(u.uCloudCov, lerp(0.6, 0.98, smooth(0, 1, sim.sky)));   // follows the slow-clearing front, not the curtain
+  if (u.uNoise) { gl.activeTexture(gl.TEXTURE7); gl.bindTexture(gl.TEXTURE_2D, noiseTex); gl.uniform1i(u.uNoise, 7); }
+}
+const lighting = { sun: new Float32Array(3), amb: new Float32Array(3), zen: new Float32Array(3), hor: new Float32Array(3), fog: new Float32Array(3), fogP: new Float32Array(4) };
+// storm: the horizon sky is snow-lit and brighter than the whiteout inscatter (fog), so fogged rock reads as a
+// grey silhouette against it instead of merging with the sky
+const LIT = { amb: [[0.30, 0.40, 0.60], [0.46, 0.50, 0.57]], zen: [[0.10, 0.25, 0.64], [0.40, 0.44, 0.50]], hor: [[0.36, 0.50, 0.78], [0.56, 0.60, 0.66]], fog: [[0.44, 0.56, 0.80], [0.44, 0.48, 0.54]] };
+function mix3(o, a, b, t) { o[0] = lerp(a[0], b[0], t); o[1] = lerp(a[1], b[1], t); o[2] = lerp(a[2], b[2], t); }
+// s: the sky / front envelope (overcast light), w: the whiteout (curtain x gust), tail: residual thinning snow
+function updateLighting(s, w, tail) {
+  const sd = smooth(0, 1, s);
+  const wd = smooth(0, 1, w);
+  // the storm sun keeps ~20% (0.62): enough directional light for sastrugi / drift relief to survive the overcast
+  const sk = 3.1 * (1 - 0.8 * sd);
+  lighting.sun[0] = 1.0 * sk; lighting.sun[1] = 0.955 * sk; lighting.sun[2] = 0.89 * sk;
+  mix3(lighting.amb, LIT.amb[0], LIT.amb[1], sd);
+  mix3(lighting.zen, LIT.zen[0], LIT.zen[1], sd);
+  mix3(lighting.hor, LIT.hor[0], LIT.hor[1], sd);
+  mix3(lighting.fog, LIT.fog[0], LIT.fog[1], sd);
+  // calm: thin clear-day haze (far peaks stay readable), mist only pooled in the valley; storm: dense and grey.
+  // Storm extinction plateaus at ~0.00011 (with the storm haze: T ~0.5 at the 3 km wall, ~0.65 at the 1.5 km
+  // forest band: grey ghosts against the brighter horizon sky), and only the gust peaks (w -> 1) push it x5
+  // to a true whiteout (T ~0.1 at the wall). The tail keeps a faint floor while a storm clears.
+  const ext = 0.00012 * Math.pow(wd, 1.5) * (1 + 4.0 * smooth(0.95, 1.0, wd)) + 0.00008 * tail;
+  lighting.fogP[0] = 1 / 42000 * (1 + 4.5 * sd); lighting.fogP[1] = 2200; lighting.fogP[2] = ext; lighting.fogP[3] = 1 / 30000 * (1 + 4.7 * sd);
+}
+function bindTex(unit, t, loc) { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(loc, unit); }
+function drawFull() { gl.drawArrays(gl.TRIANGLES, 0, 3); }
+
+let lastNow = performance.now() / 1000, frameNo = 0;
+const msArr = new Float32Array(32 * 4), maArr = new Float32Array(32);
+const calmW = [0, 0, 0], target = [0, 0, 0], grassDisp = new Float32Array(3), veilT = new Float32Array(4);
+const GRASS_PERIOD = 2560000 / 45;   // m: 10 periods of the 0.045 grass-wave octave = 27 of the 0.1215 one (see render)
+
+// wind target at time t (into target[]): calm breeze (natural gusts) or blizzard gale, plus the lateral mouse wind.
+// Needs sim.sky / sim.heading for t (stormAt) to have been evaluated first
+function windTarget(t, lateral) {
+  const g1 = Math.sin(t * 0.37) * 0.5 + Math.sin(t * 0.91 + 1.3) * 0.3 + Math.sin(t * 2.3 + 0.4) * 0.2;
+  const g2 = Math.sin(t * 0.53 + 2.0) * 0.45 + Math.sin(t * 1.37 + 0.7) * 0.35 + Math.sin(t * 3.1) * 0.2;
+  for (let i = 0; i < 3; i++) calmW[i] = sim.baseWind[i] * (1 + 0.45 * g1);
+  // gale: slow swell (g2) times a phase-modulated gust train (matte's 1.3/2.9/6.1 rad/s beat)
+  const gustTrain = 1 + 0.22 * Math.sin(t * 1.3 + 0.9) + 0.14 * Math.sin(t * 2.9 + 1.8) + 0.08 * Math.sin(t * 6.1);
+  const stormMag = (10.5 + 3.0 * g2) * gustTrain;
+  // gale line: mostly screen-right with a component away from the camera, rotated by this event's heading
+  const ch = Math.cos(sim.heading), shh = Math.sin(sim.heading);
+  let gx = camR[0] * 0.88 + camF[0] * 0.3, gz = camR[2] * 0.88 + camF[2] * 0.3;
+  let sdx = gx * ch - gz * shh, sdz = gx * shh + gz * ch;
+  const sl = Math.hypot(sdx, sdz); sdx /= sl; sdz /= sl;
+  const ss = smooth(0, 1, sim.sky);     // the gale rises with the front, before the curtain
+  target[0] = lerp(calmW[0], sdx * stormMag, ss) + camR[0] * lateral;
+  target[1] = 0;
+  target[2] = lerp(calmW[2], sdz * stormMag, ss) + camR[2] * lateral;
+}
+
+function update(dt) {
+  sim.wall += dt;
+  sim.time += dt;
+  const t = sim.time;
+  // storm
+  sim.storm = stormAt(t);
+  const s = sim.storm;
+  // mouse: steady bias from x-position, gust from horizontal velocity (fast attack, slow release)
+  mouse.vx *= Math.exp(-dt / 0.09);
+  const biasT = mouse.inside ? mouse.x * 3.0 : 0;
+  sim.bias += (biasT - sim.bias) * (1 - Math.exp(-dt / 0.8));
+  const gustT = clamp(mouse.vx / innerWidth * 10.0, -14, 14);
+  const k = Math.abs(gustT) > Math.abs(sim.gust) ? 1 - Math.exp(-dt / 0.12) : 1 - Math.exp(-dt / 1.1);
+  sim.gust += (gustT - sim.gust) * k;
+  windTarget(t, sim.bias + sim.gust);
+  const kA = 1 - Math.exp(-dt / 1.1), kB = 1 - Math.exp(-dt / 0.4);
+  for (let i = 0; i < 3; i++) {
+    sim.windA[i] += (target[i] - sim.windA[i]) * kA;
+    sim.windB[i] += (target[i] - sim.windB[i]) * kB;
+    sim.dispA[i] += sim.windA[i] * dt;
+    sim.dispB[i] += sim.windB[i] * dt;
+  }
+  sim.cloud[0] += (sim.windA[0] * 3 + 3) * dt; sim.cloud[1] += (sim.windA[2] * 3 + 1) * dt;
+  // shader clocks as integrals (so storm ramps / wind changes never jump a phase): fall, tumble, tree sway, veil scroll
+  sim.fallI += (1 + 0.9 * s) * dt;
+  sim.tumI += (1 + 0.8 * s) * dt;
+  const wl = sim.windA[0] * camR[0] + sim.windA[2] * camR[2];
+  sim.swayPh = (sim.swayPh + (1.3 + 0.08 * Math.abs(wl)) * dt) % (2 * Math.PI);
+  const vdx = wl / (1.2 + 1.5 * s), vl = Math.hypot(vdx, 1);             // apparent fall direction of the distant veil
+  const vI = sim.veilI;
+  vI[0] = (vI[0] + (2.2 + 4.0 * s) * dt) % 256; vI[1] = (vI[1] + (1.4 + 2.6 * s) * dt) % 256;
+  vI[2] = (vI[2] + (0.05 - 0.25 * vdx / vl) * dt) % 256; vI[3] = (vI[3] + 0.25 / vl * dt) % 256;
+  // accumulation (or the eased reset)
+  if (sim.melt !== null) {
+    sim.melt += dt;
+    sim.coverage = sim.meltFrom * (1 - smooth(0, 1.5, sim.melt));
+    if (sim.melt >= 1.5) { sim.coverage = 0; sim.melt = null; }
+  } else if (!holdCoverage) sim.coverage = accumulate(sim.coverage, s, dt);
+  sim.white = whiteoutAt(s, t);
+  updateLighting(sim.sky, sim.white, sim.tail);
+  pruneSegs();
+}
+
+// Lattice wrap of the per-layer displacement integrals (all CPU-side, in double precision). The shader folds
+// positions into the camera-aligned slice box with a mod, so shifting a displacement by any lattice vector of
+// that box is invisible: that keeps the uploaded floats small (no precision loss) with no discontinuity.
+const AXES = [camR, camU, camF];
+const boxS = [0, 0, 0], shift = [0, 0, 0], cq = [0, 0, 0];
+function latticeShift(cx, cy, cz) {   // camera-space coords -> the lattice vector to subtract (world space, in shift[])
+  shift[0] = shift[1] = shift[2] = 0;
+  cq[0] = cx; cq[1] = cy; cq[2] = cz;
+  for (let j = 0; j < 3; j++) { const ax = AXES[j], n = Math.floor(cq[j] / boxS[j]) * boxS[j]; shift[0] += ax[0] * n; shift[1] += ax[1] * n; shift[2] += ax[2] * n; }
+}
+function wrapLayer(L) {
+  boxS[0] = 2 * L.hx; boxS[1] = 2 * L.hy; boxS[2] = L.z1 - L.z0;
+  // wind: both integrals shifted by the same vector (the shader mixes them affinely)
+  const a = sim.dispA, b = sim.dispB;
+  latticeShift(a[0] * camR[0] + a[1] * camR[1] + a[2] * camR[2], a[0] * camU[0] + a[1] * camU[1] + a[2] * camU[2], a[0] * camF[0] + a[1] * camF[1] + a[2] * camF[2]);
+  for (let i = 0; i < 3; i++) { L.dA[i] = a[i] - shift[i]; L.dB[i] = b[i] - shift[i]; }
+  // fall: one reduced vector per speed bin, (0, -k*F, 0) with F the storm-weighted fall integral
+  for (let j = 0; j < NB; j++) {
+    const vy = -(FK_LO + (j + 0.5) / NB * (FK_HI - FK_LO)) * sim.fallI;
+    latticeShift(vy * camR[1], vy * camU[1], vy * camF[1]);
+    L.fall[3 * j] = -shift[0]; L.fall[3 * j + 1] = vy - shift[1]; L.fall[3 * j + 2] = -shift[2];
+  }
+}
+
+// G-buffer bake budget: the state machine in FS_GBUF visits each phase at most this often (see its main())
+const GB_MARCH = 900, GB_BISECT = 6, GB_HEIGHT = 1, GB_NORMAL = 8, GB_SHADOW = 110, GB_AO = 5, GB_CANOPY = 1, GB_CURV = 8;
+const GB_ITER = GB_MARCH + GB_BISECT + GB_HEIGHT + GB_NORMAL + GB_SHADOW + GB_AO + GB_CANOPY + GB_CURV;
+
+// bind the G-buffer(s) for a per-frame pass (see GBUF): uG* = shown buffer, uN* = the one being baked, uGb = how to mix them
+function bindGB(u, unit0) {
+  const cur = R.gbCur || R.gbNext, nxt = R.gbNext || R.gbCur;
+  const frac = !R.gbNext ? 0 : R.gbDone < 0 ? R.gbRow / R.gbNext.h : 1 + 0.08 * Math.min(1, (sim.wall - R.gbDone) / 0.3);
+  for (let i = 0; i < 3; i++) {
+    if (u['uG' + i]) bindTex(unit0 + i, cur.texs[i], u['uG' + i]);
+    if (u['uN' + i]) bindTex(unit0 + 3 + i, nxt.texs[i], u['uN' + i]);
+  }
+  gl.uniform3f(u.uGb, R.gbAsp, frac, !R.gbNext ? 0 : R.gbCur ? 1 : 2);
+}
+
+function render() {
+  const W = R.W, H = R.H, Ws = R.Ws, Hs = R.Hs;
+  if (!R.gbCur && !R.gbNext) return;
+  // ---- 1. progressive G-buffer: one stripe per frame, sized by adaptStripe() so the frame keeps its budget. When the
+  // last stripe lands the buffers are kept 0.3 s longer (the reveal edge clears the top), then swapped
+  if (R.gbNext) {
+    const g = R.gbNext;
+    if (R.gbDone < 0) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, g.fbo);
+      gl.viewport(0, 0, g.w, g.h);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, R.gbRow, g.w, R.gbRows);
+      gl.useProgram(P.gbuf.p);
+      setCommon(P.gbuf.u, g.w, g.h);
+      gl.uniform1f(P.gbuf.u.uPixAng, 2 * TANH / g.h);
+      gl.uniform1i(P.gbuf.u.uIter, GB_ITER);
+      drawFull();
+      gl.disable(gl.SCISSOR_TEST);
+      R.gbRow += R.gbRows; R.bakeFrame = true;
+      if (R.gbRow >= g.h) R.gbDone = sim.wall;
+    } else if (sim.wall - R.gbDone >= 0.3) {
+      freeRT(R.gbCur); R.gbCur = g; R.gbNext = null; R.gbAsp = 1;
+      buildMs = performance.now() - buildStart;      // wall time from allocate() to the swap: what the viewer waited
+      perf.skip = 2;                                  // the next dt still carries the last stripe
+      if (readyTime < 0) readyTime = sim.wall;
+    }
+  }
+
+  // ---- 2. sky + clouds (half res, temporal accumulation)
+  const sp = R.sky[R.skyI], sc = R.sky[1 - R.skyI];
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sc.fbo);
+  gl.viewport(0, 0, sc.w, sc.h);
+  gl.useProgram(P.sky.p);
+  setCommon(P.sky.u, sc.w, sc.h);
+  bindTex(0, sp.texs[0], P.sky.u.uPrev); bindTex(1, sp.texs[1], P.sky.u.uPrevD);
+  gl.uniform1f(P.sky.u.uBlend, R.skyReset ? 1.0 : 0.3);
+  gl.uniform1f(P.sky.u.uFrame, (FIXED ? Math.round(sim.time * 60) : frameNo) % 64);
+  gl.uniform1f(P.sky.u.uSteps, perf.skySteps);
+  drawFull();
+  R.skyReset = false; R.skyI = 1 - R.skyI;
+
+  // ---- 3. scene shading (at the render scale; the G-buffer is sampled by normalised uv)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, R.scene.fbo);
+  gl.viewport(0, 0, Ws, Hs);
+  gl.useProgram(P.shade.p);
+  setCommon(P.shade.u, Ws, Hs);
+  bindGB(P.shade.u, 8);
+  bindTex(3, sc.texs[0], P.shade.u.uSky); bindTex(4, sc.texs[1], P.shade.u.uSkyD);
+  // grass-wave displacement, wrapped at the common period of its two noise octaves (0.045 and 0.1215 = 2.7 x 0.045
+  // per metre on a 256-periodic texture: 10 and 27 periods respectively), so the sheen never jumps
+  for (let i = 0; i < 3; i++) grassDisp[i] = sim.dispA[i] % GRASS_PERIOD;
+  gl.uniform3fv(P.shade.u.uGrassDisp, grassDisp);
+  const wl = (sim.windA[0] * camR[0] + sim.windA[2] * camR[2]);
+  const fallS = 1.2 + 1.5 * sim.storm;
+  gl.uniform2f(P.shade.u.uVeilDir, wl / fallS, -1.0);
+  gl.uniform1f(P.shade.u.uVeilAmt, 0.012 + 0.18 * smooth(0, 1, sim.white) + 0.04 * sim.tail);   // + residual veil while a storm clears
+  for (let i = 0; i < 4; i++) veilT[i] = sim.veilI[i];
+  gl.uniform4fv(P.shade.u.uVeilT, veilT);
+  gl.uniform3f(P.shade.u.uSway, wl, sim.swayPh, Hs * 0.5 / TANH);
+  drawFull();
+
+  // ---- 4. FXAA -> hdr
+  gl.bindFramebuffer(gl.FRAMEBUFFER, R.hdr.fbo);
+  gl.useProgram(P.fxaa.p);
+  bindTex(0, R.scene.texs[0], P.fxaa.u.uTex);
+  gl.uniform2f(P.fxaa.u.uInv, 1 / Ws, 1 / Hs);
+  drawFull();
+
+  // ---- 5. snowflakes
+  {
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.useProgram(P.flake.p);
+    const u = P.flake.u;
+    setCommon(u, Ws, Hs);
+    bindGB(u, 8);
+    gl.uniform1f(u.uAspect, Ws / Hs);
+    gl.uniform1f(u.uFocalPx, Hs * 0.5 / TANH);
+    gl.uniform1f(u.uExpo, lerp(1 / 220, 1 / 55, smooth(0, 1, sim.storm)));   // calm: fast shutter, crisp hero crystals
+    // focus at 1.3 m with a gentle circle of confusion: the hero tier (0.9-2.4 m) is sharp, only the near discs defocus
+    gl.uniform1f(u.uCocK, 12 * Hs / 1080);
+    gl.uniform1f(u.uFocus, 1.3);
+    gl.uniform3fv(u.uWindA, sim.windA); gl.uniform3fv(u.uWindB, sim.windB);
+    gl.uniform1f(u.uFallV, 1 + 0.9 * sim.storm);
+    gl.uniform1f(u.uFlakeT, sim.time % 120); gl.uniform1f(u.uTumT, sim.tumI % 120);
+    gl.uniform1ui(u.uSeed, SEED);
+    const n = mouse.segs.length;
+    for (let i = 0; i < n; i++) { const m = mouse.segs[i]; msArr[i * 4] = m.x; msArr[i * 4 + 1] = m.y; msArr[i * 4 + 2] = m.dx; msArr[i * 4 + 3] = m.dy; maArr[i] = sim.wall - m.t; }
+    gl.uniform4fv(u.uMs, msArr); gl.uniform1fv(u.uMa, maArr); gl.uniform1i(u.uMn, n);
+    const dens = amountMul() * perf.flakeMul;
+    let total = 0;
+    for (const L of LAYERS) {
+      const cnt = Math.min(L.max * perf.flakeMul, L.base * dens * (1 + (L.storm - 1) * sim.storm));   // the cap thins too, or the rung is a no-op in a blizzard
+      const ni = Math.ceil(cnt);
+      if (ni <= 0) continue;
+      wrapLayer(L);
+      gl.uniform3fv(u.uDispA, L.dA); gl.uniform3fv(u.uDispB, L.dB); gl.uniform3fv(u.uFallQ, L.fall);
+      gl.uniform1i(u.uLayer, L.id);
+      gl.uniform3f(u.uSlice, L.z0, L.z1, L.fade);
+      gl.uniform2f(u.uHalfXY, L.hx, L.hy);
+      gl.uniform1f(u.uCount, cnt);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, ni);
+      total += ni;
+    }
+    sim.flakeCount = total;
+    gl.disable(gl.BLEND);
+  }
+
+  // ---- 6. bloom
+  gl.useProgram(P.down.p);
+  let src = R.hdr;
+  for (let i = 0; i < R.bloom.length; i++) {
+    const d = R.bloom[i];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, d.fbo); gl.viewport(0, 0, d.w, d.h);
+    bindTex(0, src.texs[0], P.down.u.uSrc);
+    gl.uniform2f(P.down.u.uSrcInv, 1 / src.w, 1 / src.h); gl.uniform2f(P.down.u.uDstRes, d.w, d.h);
+    gl.uniform1f(P.down.u.uThresh, i === 0 ? 1.15 : 0.0);
+    drawFull(); src = d;
+  }
+  gl.useProgram(P.up.p);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  for (let i = R.bloom.length - 1; i > 0; i--) {
+    const s = R.bloom[i], d = R.bloom[i - 1];
+    gl.bindFramebuffer(gl.FRAMEBUFFER, d.fbo); gl.viewport(0, 0, d.w, d.h);
+    bindTex(0, s.texs[0], P.up.u.uSrc);
+    gl.uniform2f(P.up.u.uSrcInv, 1 / s.w, 1 / s.h); gl.uniform2f(P.up.u.uDstRes, d.w, d.h);
+    drawFull();
+  }
+  gl.disable(gl.BLEND);
+
+  // ---- 7. composite (canvas resolution; the hdr / bloom textures are bilinearly upsampled)
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(P.comp.p);
+  bindTex(0, R.hdr.texs[0], P.comp.u.uHdr); bindTex(1, R.bloom[0].texs[0], P.comp.u.uBloom);
+  bindGB(P.comp.u, 2);     // sparkle: snow threshold / distance / sun shadow; reveal edge
+  gl.uniform2f(P.comp.u.uRes, W, H);
+  gl.uniform1f(P.comp.u.uCover, sim.coverage);
+  gl.uniform1f(P.comp.u.uTwinkleT, sim.time % 3600);
+  gl.uniform3fv(P.comp.u.uSunCol, lighting.sun);
+  // full cover drops the exposure further so sunlit snow sits below the ACES shoulder and keeps its form
+  gl.uniform1f(P.comp.u.uExposure, lerp(1.0, 0.54, Math.pow(sim.coverage, 1.3)) * lerp(1.0, 1.05, sim.storm));
+  gl.uniform1f(P.comp.u.uBloomStr, 0.12);
+  // grain clock: the frame index modulo 1024 (fract(x * 0.618) loses its 1-px randomness once x reaches ~2e6)
+  gl.uniform1f(P.comp.u.uFrame, FIXED ? Math.round(sim.time * 60) % 1024 : frameNo % 1024);
+  gl.uniform1f(P.comp.u.uStorm, sim.sky);     // grade desaturation and sparkle suppression follow the overcast front
+  drawFull();
+}
+
+// quality controller (see perf), once per PERF_WIN frames of a ready, bake-free scene; the 2 frames after a bake are
+// skipped (they still carry the last stripe). perf.frameMs, the display's frame period estimate, also sets the
+// rebake stripe budget (adaptStripe)
+function controller(dt) {
+  if (perf.skip > 0) { perf.skip--; return; }
+  perf.dts[perf.n++] = dt;
+  if (perf.n < PERF_WIN) return;
+  perf.n = 0;
+  let sum = 0; for (let i = 0; i < PERF_WIN; i++) sum += perf.dts[i];
+  perf.dts.sort();                                           // Float32Array: numeric
+  const floor = Math.max(4, perf.dts[PERF_WIN / 10] * 1000), avg = sum / PERF_WIN * 1000;
+  perf.frameMs = floor; perf.avgMs = avg;
+  if (perf.cool > 0) { perf.cool--; return; }
+  if (avg > 21.5 && avg > 1.2 * floor) {
+    perf.good = 0;
+    if (perf.level < 5) { setLevel(perf.level + 1); perf.cool = 2; perf.goodNeed = Math.min(80, perf.goodNeed * 2); }
+  } else if (avg <= 1.02 * floor && perf.level > 0) {
+    if (++perf.good >= perf.goodNeed) { setLevel(perf.level - 1); perf.good = 0; perf.cool = 2; }
+  } else perf.good = 0;
+}
+
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now() / 1000;
+  let dt = clamp(now - lastNow, 0, 0.1); lastNow = now;   // clamp tab switches / stalls
+  if (R.bakeFrame) { adaptStripe(dt); R.bakeFrame = false; }   // dt is the cost of the previous (stripe) frame
+  if (FIXED) dt = 1 / 60;
+  if (dt > 0) { sim.fps = lerp(sim.fps, 1 / Math.max(dt, 1e-3), 0.05); }
+  update(dt);
+  if (!ctxLost) {
+    render();
+    if (!FIXED && readyTime >= 0 && sim.wall - readyTime > 3 && !R.gbNext) controller(dt);
+  }
+  updateUI();
+  frameNo++;
+}
+fastForward();
+try { initGL(); } catch (e) { fatal('초기화 실패: ' + e.message); }
+sim.white = whiteoutAt(stormAt(sim.time), sim.time);
+updateLighting(sim.sky, sim.white, sim.tail);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

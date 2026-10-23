@@ -1,0 +1,1631 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>설원의 계곡</title>
+<style>
+  :root { --glass: rgba(240,246,252,0.12); --line: rgba(255,255,255,0.26); --ink: #f3f7fb; --dim: rgba(235,243,250,0.72); }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #a9c2d8; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #fade { position: fixed; inset: 0; background: #dfe9f2; pointer-events: none; transition: opacity 1.6s ease; }
+  #ui { position: fixed; left: 18px; bottom: 18px; width: 208px; padding: 12px 14px 12px; border-radius: 14px;
+        background: linear-gradient(160deg, rgba(40,62,88,0.30), rgba(24,40,60,0.36)); border: 1px solid var(--line); color: var(--ink);
+        -webkit-backdrop-filter: blur(16px) saturate(1.25); backdrop-filter: blur(16px) saturate(1.25);
+        box-shadow: 0 10px 34px rgba(18,38,66,0.20), inset 0 1px 0 rgba(255,255,255,0.25);
+        font: 12px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+        user-select: none; -webkit-user-select: none; cursor: default; letter-spacing: -0.01em; }
+  #ui .row { display: flex; align-items: center; justify-content: space-between; }
+  #ui .wind { margin-bottom: 9px; color: var(--dim); font-size: 11px; }
+  #ui .wind b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  #ui .wind svg { width: 18px; height: 18px; margin-right: 6px; transition: transform .25s linear; }
+  #ui .lab { color: var(--dim); font-size: 11px; margin: 2px 0 4px; display: flex; justify-content: space-between; }
+  #ui input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0 0 8px; }
+  #ui input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(90deg, rgba(255,255,255,.85) var(--p,40%), rgba(255,255,255,.22) var(--p,40%)); }
+  #ui input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; margin-top: -5px; box-shadow: 0 1px 6px rgba(0,30,60,.35); }
+  #ui button { width: 100%; padding: 7px 0; margin: 2px 0 6px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.34);
+               background: rgba(255,255,255,0.18); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; transition: background .2s; }
+  #ui button:hover { background: rgba(255,255,255,0.30); }
+  #ui button.ghost { background: transparent; font-weight: 500; color: var(--dim); margin-bottom: 0; }
+  #ui button.ghost:hover { background: rgba(255,255,255,0.12); color: var(--ink); }
+  #ui .sw { position: relative; width: 30px; height: 17px; }
+  #ui .sw input { opacity: 0; width: 0; height: 0; position: absolute; }
+  #ui .sw i { position: absolute; inset: 0; border-radius: 10px; background: rgba(255,255,255,0.22); transition: background .2s; cursor: pointer; }
+  #ui .sw i::after { content: ""; position: absolute; left: 2px; top: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 4px rgba(0,30,60,.3); }
+  #ui .sw input:checked + i { background: rgba(140,196,255,0.75); }
+  #ui .sw input:checked + i::after { transform: translateX(13px); }
+  #ui .auto { margin: 2px 0 6px; color: var(--dim); font-size: 11px; }
+  #hint { position: fixed; left: 0; right: 0; margin: 0 auto; width: max-content; bottom: 46px; padding: 8px 16px; border-radius: 20px;
+          -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+          color: #fff; font: 13px/1.2 -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; letter-spacing: 0.02em;
+          background: rgba(18,34,52,0.42); border: 1px solid rgba(255,255,255,0.18);
+          text-shadow: 0 1px 6px rgba(0,20,40,.35); pointer-events: none; opacity: 0; }
+</style>
+<script>if (new URLSearchParams(location.search).get('ui') === '0') document.documentElement.classList.add('noui');</script>
+<style>.noui #ui, .noui #hint { display: none !important; }</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="fade"></div>
+<div id="ui">
+  <div class="row wind"><span class="row"><svg id="warrow" viewBox="0 0 24 24"><path d="M12 3 L17 11 H13.5 V21 H10.5 V11 H7 Z" fill="#fff"/></svg>바람</span><span><b id="wval">0.0</b> m/s</span></div>
+  <div class="lab"><span>눈의 양</span><span id="amtv">보통</span></div>
+  <input id="amt" type="range" min="0.2" max="2.5" step="0.01" value="1">
+  <button id="bstorm">폭설 일으키기</button>
+  <div class="row auto"><span>자동 폭설</span><label class="sw"><input id="auto" type="checkbox" checked><i></i></label></div>
+  <button id="breset" class="ghost">쌓인 눈 초기화</button>
+</div>
+<div id="hint">마우스를 움직여 바람을 일으켜 보세요</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* =====================================================================================
+   설원의 계곡 — real-time snowfall over an alpine valley (Three.js r170, fully rasterized)
+   Pipeline:  scene (MSAA, HDR, depth tex)  ->  snow flakes (instanced quads, soft vs depth)
+              -> composite (+ distant snow veil)  ->  bloom (dual filter)  ->  ACES + grade
+   ===================================================================================== */
+
+// ---------------------------------------------------------------- URL / test hooks
+const Q = new URLSearchParams(location.search);
+const qnum = (k, d) => { const v = parseFloat(Q.get(k)); return Number.isFinite(v) ? v : d; };
+const SEED = Math.floor(qnum('seed', 7)) >>> 0;
+const T_START = Math.max(0, qnum('t', 0));
+const COVER_Q = Q.has('cover') ? Math.min(1, Math.max(0, qnum('cover', 0))) : null;
+const STORM_Q = Q.get('storm');
+const WIND_Q = (Q.get('wind') || '').split(',').map(Number);
+const SHOW_UI = Q.get('ui') !== '0';
+const NOSNOW = !!Q.get('nosnow');
+if (!SHOW_UI) { document.getElementById('ui').style.display = 'none'; document.getElementById('hint').style.display = 'none'; }
+
+function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
+const smooth = (e0, e1, x) => { const t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ---------------------------------------------------------------- CPU value noise (terrain, fixed seed)
+const PERM = new Uint8Array(512), VALS = new Float32Array(256);
+{ const r = mulberry32(90210); const p = new Uint8Array(256); for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)); const t = p[i]; p[i] = p[j]; p[j] = t; }
+  for (let i = 0; i < 512; i++) PERM[i] = p[i & 255]; for (let i = 0; i < 256; i++) VALS[i] = r() * 2 - 1; }
+function vn(x, y) {               // quintic value noise, [-1,1]
+  const xf = Math.floor(x), yf = Math.floor(y), fx = x - xf, fy = y - yf, xi = xf & 255, yi = yf & 255;
+  const p0 = PERM[xi], p1 = PERM[xi + 1];
+  const a = VALS[PERM[p0 + yi]], b = VALS[PERM[p1 + yi]], c = VALS[PERM[p0 + yi + 1]], d = VALS[PERM[p1 + yi + 1]];
+  const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10), uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+const ND = [0, 0, 0];
+function vnd(x, y) {              // value noise + analytic derivatives -> ND
+  const xf = Math.floor(x), yf = Math.floor(y), fx = x - xf, fy = y - yf, xi = xf & 255, yi = yf & 255;
+  const p0 = PERM[xi], p1 = PERM[xi + 1];
+  const a = VALS[PERM[p0 + yi]], b = VALS[PERM[p1 + yi]], c = VALS[PERM[p0 + yi + 1]], d = VALS[PERM[p1 + yi + 1]];
+  const ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10), uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+  const dux = 30 * fx * fx * (fx * (fx - 2) + 1), duy = 30 * fy * fy * (fy * (fy - 2) + 1);
+  const k = a - b - c + d;
+  ND[0] = a + (b - a) * ux + (c - a) * uy + k * ux * uy; ND[1] = dux * (b - a + k * uy); ND[2] = duy * (c - a + k * ux);
+}
+function fbm(x, y, oct) { let s = 0, a = 0.5, n = 0;
+  for (let i = 0; i < oct; i++) { s += a * vn(x, y); n += a; const nx = 1.6 * x - 1.2 * y + 17.13, ny = 1.2 * x + 1.6 * y - 9.71; x = nx; y = ny; a *= 0.5; }
+  return s / n; }
+function ridged(x, y, oct) {      // ridged multifractal: sharp crests, octaves weighted by previous octave
+  let s = 0, a = 0.5, w = 1, n = 0;
+  for (let i = 0; i < oct; i++) { let v = 1 - Math.abs(vn(x, y)); v *= v; v *= w; w = clamp(v * 1.8, 0, 1); s += v * a; n += a * 0.55;
+    const nx = 1.66 * x - 1.18 * y + 5.3, ny = 1.18 * x + 1.66 * y - 2.9; x = nx; y = ny; a *= 0.52; }
+  return s / n; }
+function erosionFbm(x, y, oct) {  // gradient-damped fbm (IQ) - smooth valleys, detailed ridges
+  let a = 0, b = 0.5, dx = 0, dy = 0;
+  for (let i = 0; i < oct; i++) { vnd(x, y); dx += ND[1]; dy += ND[2]; a += b * ND[0] / (1 + dx * dx + dy * dy);
+    const nx = 1.6 * x - 1.2 * y + 3.7, ny = 1.2 * x + 1.6 * y + 1.1; x = nx; y = ny; b *= 0.5; }
+  return a; }
+
+// ---------------------------------------------------------------- terrain layout (meters; camera at x=0,z=0 looking -Z)
+const CAM_Y = 2000;
+const SUN = new THREE.Vector3(qnum('sx', -0.62), qnum('sy', 0.55), qnum('sz', -0.56)).normalize();     // from the left and ahead: grazing light on the wall, backlit flakes
+// Winding dirt paths, analytic so the fragment shader can draw them exactly (x = f(d), d = -z)
+function path1X(d) { return 30 + 75 * Math.sin(d * 0.0041 + 0.9) + 30 * Math.sin(d * 0.0115 + 2.1) - 0.07 * d; }
+function path2D(x) { return 880 + 150 * Math.sin(x * 0.0029 + 0.4) + 0.12 * x; }
+let lastUplift = 0, lastWall = 0;
+function cone(x, d, cx, cd, rx, rd, p) { const dx = (x - cx) / rx, dd = (d - cd) / rd, r = Math.sqrt(dx * dx + dd * dd); return r >= 1 ? 0 : Math.pow(1 - r, p) * (r < 0.15 ? 1 : 1); }
+function uplift(x, d) {
+  let e = 0;
+  { // right wall: steep face along a line running from near-right to far-centre
+    const tx = -0.3496, td = 0.9369, rx = x - 1750, rd = d - 1900;
+    const along = rx * tx + rd * td, across = rx * td - rd * tx;
+    const A = 1550 - 0.055 * along;
+    const ramp = smooth(-300, 1250, across + 260 * fbm(along * 0.0011, 3.3, 3));
+    e += A * ramp * smooth(8300, 6400, along);
+    lastWall = A * ramp * smooth(8300, 6400, along);
+  }
+  e += 2300 * cone(x, d, -4700, 11200, 3300, 2700, 0.95);     // left pyramid peak (massive)
+  e += 2250 * cone(x, d, -2700, 15200, 3900, 3000, 0.85);     // broad glaciated massif, centre-left
+  e += 1500 * cone(x, d, -800, 12000, 2300, 2100, 0.95);      // central peaks behind the wall's end
+  e += 1500 * cone(x, d, -12500, 22500, 7500, 3800, 0.9);     // far left range (hazy)
+  e += 900 * cone(x, d, 3500, 17000, 5000, 3000, 0.9);        // far right range behind the wall
+  { const dx = (x + 4400 + 0.2 * (d - 5000)) / 1500, dd = (d - 5600) / 2500; e += 650 * Math.exp(-(dx * dx + dd * dd)); } // valley foothills
+  return e;
+}
+function baseH(x, d) {
+  const dd = Math.max(d, 0);
+  let m = 1768 + 120 * Math.exp(-dd / 380) + 105 * smooth(-400, 2600, x + 0.12 * d);
+  m += 44 * fbm(x * 0.0016 + 11.3, d * 0.0016 + 7.1, 4) + 11 * fbm(x * 0.0068 + 3.3, d * 0.0068 - 2.2, 3);
+  const ax = -1650 - 0.34 * dd;                                    // deep glacial valley on the left
+  const vf = 1040 + 0.022 * dd + 25 * fbm(dd * 0.0008, x * 0.0008 + 9, 3);
+  const s = x - ax;
+  if (s > 0) return vf + (m - vf) * smooth(220, 1500 + 0.08 * dd, s);
+  const rim = 1500 + 0.02 * dd + 120 * fbm(x * 0.0006 + 2, d * 0.0006, 3);
+  return vf + (rim - vf) * smooth(220, 1700, -s);
+}
+function knollEdge(x) { return 10.4 + 0.42 * clamp(x, -14, 19) - 1.2 * Math.max(x - 19, 0) + 0.9 * fbm(x * 0.09 + 5.5, 1.7, 2); }
+function heightAt(x, z) {
+  const d = -z;
+  let h = baseH(x, d);
+  lastWall = 0; const e = uplift(x, d); lastUplift = e; const wallF = e > 1 ? lastWall / e : 0;
+  if (e > 2) {   // mountains: domain-warped ridged multifractal + erosion detail, scaled by massif envelope
+    const X = x * 0.001, D = d * 0.001;
+    const wx = X + 0.42 * fbm(X * 0.55 + 4.1, D * 0.55 + 1.3, 3);
+    const wy = D + 0.42 * fbm(X * 0.55 - 3.7, D * 0.55 + 8.9, 3);
+    const r = ridged(wx * 0.62, wy * 0.62, 8) / 1.2;
+    const er = erosionFbm(wx * 2.4, wy * 2.4, 6);
+    // undamped high-frequency ridges: buttresses & gullies survive on steep faces (erosion fbm smooths them away)
+    const r2 = wallF > 0.02 ? ridged(wx * 5.2 + 3.1, wy * 5.2 - 1.7, 4) / 1.2 : 0.45;
+    h += e * (0.58 + (0.30 + 0.08 * wallF) * r + 0.30 * er + 0.09 * wallF * (r2 - 0.45));
+  }
+  if (d > -120 && d < 260 && x > -150 && x < 200) {   // the viewpoint knoll we stand on
+    const ed = knollEdge(x), u = d - ed;
+    let k = (CAM_Y - 6.4) - 0.02 * d + 0.03 * x + 0.35 * fbm(x * 0.21, d * 0.21, 2);
+    if (u > 0) k -= 0.95 * u + 0.03 * u * u;
+    const kk = 4, dh = Math.abs(h - k), hh = Math.max(kk - dh, 0) / kk;
+    h = Math.max(h, k) + hh * hh * kk * 0.25;     // smooth max
+  }
+  return h;
+}
+function forestDensity(x, d, h, ny) {
+  if (d < 120) return 0;
+  let f = 0.5 + 0.5 * fbm(x * 0.0021 + 5.5, d * 0.0021 - 3.3, 4);
+  f += 0.55 * Math.exp(-Math.pow((d - 1250 - 260 * Math.sin(x * 0.0019)) / 240, 2));   // forest band across the middle
+  f += 0.35 * smooth(-150, -900, x - 0.15 * d) * smooth(250, 700, d);                  // dark wooded hillside, left
+  f += 0.25 * smooth(900, 1800, x) * smooth(400, 900, d) * smooth(4000, 2500, d);      // right side groves
+  f *= smooth(2350, 2150, h) * smooth(0.72, 0.86, ny);                                // tree line / steepness
+  const p1 = Math.abs(x - path1X(d)), p2 = Math.abs(d - path2D(x));
+  f *= smooth(8, 30, Math.min(p1, x > path1X(900) ? p2 : 1e9));                          // clear along the paths
+  return clamp((f - 0.66) * 2.4, 0, 1);
+}
+
+// ---------------------------------------------------------------- renderer
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false, depth: true });
+renderer.autoClear = false;
+renderer.outputColorSpace = THREE.LinearSRGBColorSpace;   // we do tonemap + sRGB ourselves
+const MAX_PR = Math.min(window.devicePixelRatio || 1, 1.5);
+let quality = { pr: Math.min(MAX_PR, 1.25), msaa: 4 };
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 1.0, 90000);
+const BASE_PITCH = -11 * Math.PI / 180, BASE_YAW = 0;
+camera.position.set(0, CAM_Y, 0);
+camera.rotation.order = 'YXZ'; camera.rotation.set(BASE_PITCH, BASE_YAW, 0);
+camera.updateMatrixWorld();
+const snowCam = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.05, 2000);
+// fixed snow-volume axes = initial camera basis (drift never re-wraps the flakes)
+const AX_R = new THREE.Vector3(), AX_U = new THREE.Vector3(), AX_B = new THREE.Vector3();
+camera.matrixWorld.extractBasis(AX_R, AX_U, AX_B);
+
+// ---------------------------------------------------------------- noise texture (tileable value noise, 4 seeds)
+function bakeNoise() {
+  const N = 512, C = 32, data = new Uint8Array(N * N * 4);
+  for (let ch = 0; ch < 4; ch++) {
+    const r = mulberry32(1234 + ch * 977), lat = new Float32Array(C * C);
+    for (let i = 0; i < C * C; i++) lat[i] = r();
+    for (let y = 0; y < N; y++) { const gy = y / N * C, iy = Math.floor(gy), fy = gy - iy, uy = fy * fy * fy * (fy * (fy * 6 - 15) + 10);
+      for (let x = 0; x < N; x++) { const gx = x / N * C, ix = Math.floor(gx), fx = gx - ix, ux = fx * fx * fx * (fx * (fx * 6 - 15) + 10);
+        const x0 = ix % C, x1 = (ix + 1) % C, y0 = iy % C, y1 = (iy + 1) % C;
+        const a = lat[y0 * C + x0], b = lat[y0 * C + x1], c = lat[y1 * C + x0], d = lat[y1 * C + x1];
+        const v = a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+        data[(y * N + x) * 4 + ch] = Math.round(v * 255); } } }
+  const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true; t.anisotropy = 8; t.needsUpdate = true; return t;
+}
+const noiseTex = bakeNoise();
+
+// ---------------------------------------------------------------- shared uniforms
+const U = {
+  uTime: { value: 0 }, uStorm: { value: 0 }, uCoverage: { value: 0 },
+  uSunDir: { value: SUN.clone() }, uSunColor: { value: new THREE.Vector3() }, uSkyAmb: { value: new THREE.Vector3() }, uGroundAmb: { value: new THREE.Vector3() },
+  uRayleigh: { value: new THREE.Vector3() }, uRayCol: { value: new THREE.Vector3() }, uHazeCol: { value: new THREE.Vector3() },
+  uHazeDen: { value: 0 }, uHazeBase: { value: 1150 }, uHazeScale: { value: 420 },
+  uZenith: { value: new THREE.Vector3() }, uHorizon: { value: new THREE.Vector3() },
+  uCloudOff: { value: new THREE.Vector2() }, uCloudCov: { value: 0.4 }, uCloudDark: { value: 0 },
+  uWind: { value: new THREE.Vector3() }, uNoise: { value: noiseTex },
+  uShadowN: { value: null }, uShadowF: { value: null }, uShMatN: { value: new THREE.Matrix4() }, uShMatF: { value: new THREE.Matrix4() },
+  uShTexN: { value: 1 / 2048 }, uShTexF: { value: 1 / 2048 },
+};
+
+const COMMON = /* glsl */`
+uniform float uTime, uStorm, uCoverage;
+uniform vec3 uSunDir, uSunColor, uSkyAmb, uGroundAmb;
+uniform vec3 uRayleigh, uRayCol, uHazeCol;
+uniform float uHazeDen, uHazeBase, uHazeScale;
+uniform vec3 uZenith, uHorizon;
+uniform vec2 uCloudOff; uniform float uCloudCov, uCloudDark;
+uniform vec3 uWind;
+uniform sampler2D uNoise;
+uniform sampler2D uShadowN, uShadowF; uniform mat4 uShMatN, uShMatF; uniform float uShTexN, uShTexF;
+// noise texture: 32 value-noise cells per tile; p in cell units
+float nR(vec2 p){ return texture2D(uNoise, p * 0.03125).r; }
+float nG(vec2 p){ return texture2D(uNoise, p * 0.03125).g; }
+float nB(vec2 p){ return texture2D(uNoise, p * 0.03125).b; }
+float fbmT(vec2 p){ float s = 0., a = 0.5; for (int i = 0; i < 4; i++){ s += a * texture2D(uNoise, p * 0.03125).r; p = mat2(1.6, 1.2, -1.2, 1.6) * p + vec2(3.1, 1.7); a *= 0.5; } return s / 0.9375; }
+float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float hash13(vec3 p3){ p3 = fract(p3 * .1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
+// clouds: 2.5D layer at ~5.2 km; shared by sky and the cloud-shadow lookup on the ground
+float cloudDens(vec2 cp, float cov){
+  vec2 p = (cp + uCloudOff) / 2400.0;
+  float n = 0.52 * nR(p) + 0.26 * nG(p * 2.03 + vec2(1.7, 9.2)) + 0.14 * nB(p * 4.1 + vec2(8.3, 2.8)) + 0.08 * nR(p * 8.7 + vec2(3.3, 5.1));
+  return smoothstep(1.0 - cov, 1.0 - cov + 0.26, n);
+}
+float cloudShadow(vec3 P){
+  vec2 cp = P.xz + uSunDir.xz / max(uSunDir.y, 0.2) * (5200.0 - P.y);
+  return 1.0 - 0.38 * cloudDens(cp, 0.40) * (1.0 - uStorm);
+}
+// aerial perspective: Rayleigh-like (wavelength dependent, thin uniform air) + height-fog haze / valley mist (analytic exp height integral)
+vec3 atmo(vec3 col, vec3 P){
+  vec3 rv = P - cameraPosition; float dist = length(rv); vec3 rd = rv / max(dist, 1e-3);
+  float mu = dot(rd, uSunDir);
+  vec3 tR = exp(-uRayleigh * dist);
+  float k = 1.0 / uHazeScale;
+  float dy = rd.y * dist;
+  float od = uHazeDen * exp(-k * (cameraPosition.y - uHazeBase)) * (abs(dy) > 0.5 ? (1.0 - exp(-k * dy)) / (k * rd.y) : dist);
+  float tM = exp(-max(od, 0.0));
+  vec3 sunGlow = uSunColor * (0.05 + 0.35 * pow(max(mu, 0.0), 5.0));
+  vec3 inR = (uRayCol + sunGlow * 0.4) * (1.0 - tR);
+  vec3 inM = (uHazeCol + sunGlow) * (1.0 - tM);
+  vec3 c = (col * tR + inR) * tM + inM;
+  // valley mist: soft pools hugging the low ground far away (P.y band), broken up by large-scale noise
+  float band = 1.0 - smoothstep(1150.0, 1450.0, P.y);
+  float mist = band * smoothstep(1800.0, 7000.0, dist) * (0.35 + 0.65 * texture2D(uNoise, P.xz / 76000.0 + vec2(uTime * 0.0004, 0.0)).g);
+  c = mix(c, uHazeCol * 1.12 + uSunColor * 0.04, clamp(mist * 0.55 * (1.0 - uStorm), 0.0, 1.0));
+  return c;
+}
+float shadowPCF(sampler2D m, vec3 s, float tex, float bias){
+  float sum = 0.0;
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++)
+    sum += step(s.z - bias, texture2D(m, s.xy + vec2(float(x), float(y)) * tex * 1.25).r);
+  return sum / 9.0;
+}
+float sunShadow(vec3 P, vec3 N){
+  vec4 c = uShMatN * vec4(P + N * 3.5, 1.0); vec3 s = c.xyz * 0.5 + 0.5;
+  if (s.x > 0.005 && s.x < 0.995 && s.y > 0.005 && s.y < 0.995 && s.z < 1.0) return shadowPCF(uShadowN, s, uShTexN, 0.0004);
+  c = uShMatF * vec4(P + N * 75.0, 1.0); s = c.xyz * 0.5 + 0.5;
+  if (s.x > 0.0 && s.x < 1.0 && s.y > 0.0 && s.y < 1.0 && s.z < 1.0) return shadowPCF(uShadowF, s, uShTexF, 0.0007);
+  return 1.0;
+}
+vec3 ambient(vec3 N){ return mix(uGroundAmb, uSkyAmb, N.y * 0.5 + 0.5); }
+`;
+
+// ---------------------------------------------------------------- terrain meshes (camera-centred polar grids)
+const TH0 = -70 * Math.PI / 180, TH1 = 70 * Math.PI / 180, NA = 1024;
+function buildTerrain(r0, r1, nr) {
+  const na = NA, n = nr * na;
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), att = new Float32Array(n * 4), up = new Float32Array(n);
+  const rs = new Float64Array(nr); for (let i = 0; i < nr; i++) rs[i] = r0 * Math.pow(r1 / r0, i / (nr - 1));
+  const sn = new Float64Array(na), cs = new Float64Array(na);
+  for (let j = 0; j < na; j++) { const th = TH0 + (TH1 - TH0) * j / (na - 1); sn[j] = Math.sin(th); cs[j] = Math.cos(th); }
+  for (let i = 0; i < nr; i++) for (let j = 0; j < na; j++) {
+    const k = i * na + j, x = rs[i] * sn[j], z = -rs[i] * cs[j];
+    const h = heightAt(x, z);
+    pos[k * 3] = x; pos[k * 3 + 1] = h; pos[k * 3 + 2] = z; up[k] = lastUplift;
+  }
+  const P = (i, j, o) => pos[(i * na + j) * 3 + o];
+  for (let i = 0; i < nr; i++) for (let j = 0; j < na; j++) {
+    const i0 = Math.max(i - 1, 0), i1 = Math.min(i + 1, nr - 1), j0 = Math.max(j - 1, 0), j1 = Math.min(j + 1, na - 1);
+    const ax = P(i1, j, 0) - P(i0, j, 0), ay = P(i1, j, 1) - P(i0, j, 1), az = P(i1, j, 2) - P(i0, j, 2);
+    const bx = P(i, j1, 0) - P(i, j0, 0), by = P(i, j1, 1) - P(i, j0, 1), bz = P(i, j1, 2) - P(i, j0, 2);
+    let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+    if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+    const k = i * na + j; nor[k * 3] = nx; nor[k * 3 + 1] = ny; nor[k * 3 + 2] = nz;
+    // cavity from a wider-stencil laplacian (concave = darker gullies, convex ridges brighter)
+    const I0 = Math.max(i - 3, 0), I1 = Math.min(i + 3, nr - 1), J0 = Math.max(j - 3, 0), J1 = Math.min(j + 3, na - 1);
+    const hC = P(i, j, 1), dr = Math.max(rs[I1] - rs[I0], 1e-3) * 0.5, dt = Math.max(rs[i] * (TH1 - TH0) / (na - 1) * (J1 - J0) * 0.5, 1e-3);
+    const lap = (P(I1, j, 1) + P(I0, j, 1) - 2 * hC) / (dr * dr) + (P(i, J1, 1) + P(i, J0, 1) - 2 * hC) / (dt * dt);
+    const sc = Math.max(dr, dt);
+    att[k * 4 + 2] = clamp(1.0 - lap * sc * 0.6, 0.55, 1.25);
+    const x = pos[k * 3], d = -pos[k * 3 + 2];
+    att[k * 4] = forestDensity(x, d, hC, ny);
+    att[k * 4 + 1] = clamp(up[k] / 900, 0, 1);
+    att[k * 4 + 3] = 0;
+  }
+  const idx = new Uint32Array((nr - 1) * (na - 1) * 6); let q = 0;
+  for (let i = 0; i < nr - 1; i++) for (let j = 0; j < na - 1; j++) {
+    const a = i * na + j, b = a + 1, c = a + na, d = c + 1;
+    idx[q++] = a; idx[q++] = b; idx[q++] = c; idx[q++] = b; idx[q++] = d; idx[q++] = c;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  g.setAttribute('aAttr', new THREE.BufferAttribute(att, 4));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+
+const TERRAIN_VS = /* glsl */`
+attribute vec4 aAttr;
+varying vec3 vW; varying vec3 vN; varying vec4 vA;
+void main(){
+  vec4 w = modelMatrix * vec4(position, 1.0);
+  vW = w.xyz; vN = normal; vA = aAttr;
+  gl_Position = projectionMatrix * viewMatrix * w;
+}`;
+const TERRAIN_FS = /* glsl */`
+${COMMON}
+uniform int uDbg;
+varying vec3 vW; varying vec3 vN; varying vec4 vA;
+// path distance for x = f(d) curves (same formulas as JS)
+float path1X(float d){ return 30.0 + 75.0 * sin(d * 0.0041 + 0.9) + 30.0 * sin(d * 0.0115 + 2.1) - 0.07 * d; }
+float path1dX(float d){ return 75.0 * 0.0041 * cos(d * 0.0041 + 0.9) + 30.0 * 0.0115 * cos(d * 0.0115 + 2.1) - 0.07; }
+float path2D(float x){ return 880.0 + 150.0 * sin(x * 0.0029 + 0.4) + 0.12 * x; }
+float path2dD(float x){ return 150.0 * 0.0029 * cos(x * 0.0029 + 0.4) + 0.12; }
+float pathMask(vec2 xz, float pixW){
+  float d = -xz.y, x = xz.x;
+  float m = 0.0;
+  if (d > 60.0 && d < 2400.0){
+    float e1 = abs(x - path1X(d)) / sqrt(1.0 + pow(path1dX(d), 2.0));
+    float w1 = 1.6 + 0.4 * nR(xz * 0.05);
+    m = max(m, (1.0 - smoothstep(w1 - pixW, w1 + pixW, e1)) * min(1.0, w1 / pixW));
+  }
+  if (x > path1X(880.0) - 20.0 && x < 2600.0){
+    float e2 = abs(d - path2D(x)) / sqrt(1.0 + pow(path2dD(x), 2.0));
+    float w2 = 1.3;
+    m = max(m, (1.0 - smoothstep(w2 - pixW, w2 + pixW, e2)) * min(1.0, w2 / pixW) * smoothstep(path1X(880.0) - 20.0, path1X(880.0) + 10.0, x));
+  }
+  return m;
+}
+void main(){
+  vec3 P = vW;
+  vec3 Ng = normalize(vN);
+  vec3 V = cameraPosition - P; float dist = length(V); V /= dist;
+  float pixW = dist * 0.0011;                  // ~ world size of a pixel at this distance
+  float mtn = vA.y, forest = vA.x, ao = vA.z;
+  vec2 xz = P.xz;
+
+  // ---- rock detail: horizontal strata + fall-line gullies, applied as a bump via screen derivatives
+  // warped strata (ledges) + vertical gullies / water streaks, biplanar on the wall's horizontal axis
+  float warp = nR(xz / 300.0) * 2.5 + nG(xz / 90.0) * 0.6;
+  float strata = nG(vec2(P.y / 42.0 + warp, (P.x * 0.7 + P.z * 0.3) / 500.0));
+  float bx = abs(Ng.x) / (abs(Ng.x) + abs(Ng.z) + 1e-3);
+  float gully = mix(nB(vec2(P.x / 38.0, P.y / 300.0) + 5.3), nB(vec2(P.z / 38.0, P.y / 300.0)), bx);
+  float gullyF = mix(nR(vec2(P.x / 9.0, P.y / 70.0) + 2.1), nR(vec2(P.z / 9.0, P.y / 70.0) + 7.7), bx);
+  float rockH = strata * 3.0 + gully * 16.0 + gullyF * 4.0 + nR(xz / 7.0) * 1.2;
+  float steep = 1.0 - smoothstep(0.55, 0.85, Ng.y);
+  vec3 N = Ng;
+  {
+    vec3 dpx = dFdx(P), dpy = dFdy(P);
+    float hx = dFdx(rockH), hy = dFdy(rockH);
+    vec3 r1 = cross(dpy, Ng), r2 = cross(Ng, dpx);
+    float det = dot(dpx, r1);
+    vec3 grad = sign(det) * (hx * r1 + hy * r2) / max(abs(det), 1e-9);   // surface gradient (Mikkelsen)
+    float amt = ((0.25 + 0.75 * steep) * mtn) / (1.0 + pixW * 0.15);   // (derivative bump is 2x2-blocky: rock only)
+    vec3 g = grad * amt; float gl = length(g); g *= min(1.0, 1.2 / max(gl, 1e-6));   // clamp: grazing-angle derivatives blow up
+    N = normalize(Ng - g);
+  }
+  float upN = N.y;
+
+  // ---- grass / meadow albedo (linear)
+  float nBig = fbmT(xz / 140.0);
+  float nMid = nR(xz / 18.0 + 7.0);
+  float nFine = nG(xz / 1.6);
+  vec3 gBright = vec3(0.33, 0.39, 0.035), gDeep = vec3(0.10, 0.18, 0.022), gDry = vec3(0.42, 0.37, 0.10);
+  float nHuge = fbmT(xz / 700.0 + 9.0);
+  vec3 grass = mix(gDeep, gBright, smoothstep(0.2, 0.8, nHuge * 0.7 + nBig * 0.3 + 0.12 * (nMid - 0.5)));
+  grass = mix(grass, gDry, smoothstep(0.55, 0.85, nBig * 0.6 + nMid * 0.4) * 0.35);
+  float fineT = nFine * 0.6 + nR(xz / 0.35) * 0.4;
+  grass *= 0.80 + 0.40 * fineT;
+  grass *= 0.86 + 0.28 * smoothstep(0.3, 0.7, nR(xz / 4.0 + 2.0));     // tussock-scale variation
+  grass = mix(grass, vec3(0.025, 0.05, 0.022), smoothstep(0.15, 0.7, forest));    // forest floor
+  // alpine meadow on the mountains: duller, then scree
+  grass = mix(grass, vec3(0.16, 0.22, 0.07), smoothstep(2000.0, 2500.0, P.y) * mtn);
+
+  // ---- rock
+  vec3 rock = mix(vec3(0.11, 0.115, 0.12), vec3(0.27, 0.27, 0.26), smoothstep(0.2, 0.8, strata * 0.45 + gully * 0.55));
+  // biplanar coordinates for cliffs (xz-planar sampling smears vertically on steep faces)
+  vec2 cuv = mix(vec2(P.x, P.y), vec2(P.z, P.y), bx);
+  vec2 ruv = mix(xz, cuv, steep);
+  rock *= 0.55 + 0.7 * gullyF * mix(1.0, gully, 0.6) + 0.15 * nR(ruv / 60.0);   // dark vertical water streaks
+  rock = mix(rock, vec3(0.25, 0.22, 0.18), 0.35 * nB(ruv / 140.0));            // warm iron staining
+  rock *= 0.85 + 0.3 * nG(ruv / 9.0);                                          // blocky fracture variation
+  rock *= mix(1.0, 0.75, (1.0 - smoothstep(0.6, 0.9, ao)));
+  float rockW = 1.0 - smoothstep(0.62, 0.80, Ng.y + (nMid - 0.5) * 0.18 + ((gully - 0.5) * 0.2) * mtn);
+  rockW = max(rockW, smoothstep(2350.0, 2800.0, P.y + (nBig - 0.5) * 500.0) * mtn);
+  rockW *= smoothstep(30.0, 80.0, dist);                // the knoll's steep edge stays grassy (blades cover it)
+  vec3 alb = mix(grass, rock, rockW);
+
+  // ---- dirt path
+  float pm = pathMask(xz, pixW) * (1.0 - mtn) * smoothstep(0.75, 0.9, Ng.y);
+  alb = mix(alb, vec3(0.38, 0.32, 0.22) * (0.8 + 0.35 * nFine), pm * 0.85);
+
+  // ---- snow: permanent high snow + dynamic accumulation
+  float C = uCoverage;
+  float drift = fbmT(xz / 85.0 + vec2(uWind.x, uWind.z) * 0.0) - 0.5;
+  float tufts = (nB(xz / 0.9) - 0.5) * (1.0 - smoothstep(25.0, 260.0, dist));
+  // snow decisions use the geometric normal + smooth rock noise (the derivative bump is 2x2-quad blocky)
+  float upG = Ng.y + ((gully - 0.5) * 0.16 + (strata - 0.5) * 0.12) * mtn;
+  float upS = smoothstep(0.40, 0.90, upG);
+  float altB = clamp((P.y - 1700.0) / 1800.0, 0.0, 1.0);
+  // coverage C -> patchy cover: flat & high ground first, wind drifts (85 m), clumps (10 m), grass tufts poking through (near)
+  float patchN = nG(xz / 11.0 + 3.0) - 0.5 + (nR(xz / 2.3 + 1.7) - 0.5) * 0.6 * (1.0 - smoothstep(60.0, 400.0, dist))
+               + (nB(xz / 4.0 + 6.1) - 0.5) * 0.5 * (1.0 - smoothstep(900.0, 2600.0, dist));   // ragged patch edges
+  float sAmt = -0.44 + 0.76 * C + 0.28 * altB * C - (1.0 - upS) * 1.45
+             + drift * 0.42 + patchN * 0.16 - tufts * 0.45 * (1.0 - C * 0.7) - pm * 0.3 * (1.0 - smoothstep(0.6, 1.0, C));
+  sAmt -= (1.0 - smoothstep(0.0, 0.08, C)) * 0.5;      // nothing at all on bare ground at C = 0
+  float sw = 0.06 + min(pixW * 0.004, 0.25);            // widen the transition with distance (no shimmering edges)
+  float snow = smoothstep(-sw, sw, sAmt);
+  float perm = smoothstep(2550.0, 3050.0, P.y + drift * 700.0 + (gully - 0.5) * 300.0) * smoothstep(0.42, 0.72, upG + drift * 0.35 + (strata - 0.5) * 0.2);
+  perm = max(perm, smoothstep(3150.0, 3500.0, P.y) * smoothstep(0.25, 0.5, upG));
+  snow = max(snow, perm);
+
+  // ---- lighting
+  float ndl = dot(N, uSunDir);
+  float sh = sunShadow(P, Ng) * cloudShadow(P);
+  vec3 amb = ambient(N) * ao;
+  vec3 col = alb * (uSunColor * max(ndl, 0.0) * sh + amb);
+  // snow shading: wrap diffuse (soft subsurface), blue-tinted shade, sparkles
+  vec3 sAlb = vec3(0.90, 0.93, 0.97) * (1.0 - 0.07 * pm) * (0.93 + 0.07 * nBig);   // wind-packed vs fresh powder
+  vec3 Ns = normalize(Ng + vec3(drift - 0.0, 0.0, patchN) * 0.22 * (1.0 - steep));
+  float ndlS = mix(dot(Ns, uSunDir), ndl, steep);
+  float wrap = clamp((ndlS + 0.25) / 1.25, 0.0, 1.0);
+  vec3 sCol = sAlb * (uSunColor * wrap * sh + amb * 1.2);
+  sCol += vec3(0.015, 0.05, 0.12) * (1.0 - sh * wrap) * (1.0 - uStorm * 0.6);
+  {
+    float cell = max(0.035, pixW * 1.2);
+    vec3 cid = floor(P / cell);
+    float hs = hash13(cid + floor(V * 18.0));
+    float sp = smoothstep(0.9965, 1.0, hs) * sh * max(ndl, 0.0) * (1.0 - uStorm) * (1.0 - smoothstep(150.0, 900.0, dist));
+    sCol += uSunColor * sp * 9.0;
+  }
+  col = mix(col, sCol, snow);
+  col = atmo(col, P);
+  if (uDbg == 1) col = alb; else if (uDbg == 2) col = vec3(snow); else if (uDbg == 3) col = N * 0.5 + 0.5; else if (uDbg == 4) col = vec3(sh); else if (uDbg == 5) col = vec3(pm, rockW, forest);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+const terrainMat = new THREE.ShaderMaterial({ uniforms: { ...U, uDbg: { value: parseInt(Q.get('dbg') || '0') } }, vertexShader: TERRAIN_VS, fragmentShader: TERRAIN_FS, extensions: { derivatives: true } });
+const tA = performance.now();
+const valleyGeo = buildTerrain(3, 1500, 380);
+const mountainGeo = buildTerrain(1500, 34000, 760);
+window.__timing = { terrain: Math.round(performance.now() - tA), t0: Math.round(tA) };
+const scene = new THREE.Scene();
+const valleyMesh = new THREE.Mesh(valleyGeo, terrainMat); valleyMesh.frustumCulled = false;
+const mountainMesh = new THREE.Mesh(mountainGeo, terrainMat); mountainMesh.frustumCulled = false;
+scene.add(valleyMesh, mountainMesh);
+
+// ---------------------------------------------------------------- sky (fullscreen, drawn last where depth == far)
+const SKY_VS = /* glsl */`
+uniform mat4 uInvVP; varying vec3 vDir;
+void main(){ vec4 w = uInvVP * vec4(position.xy, 1.0, 1.0); vDir = w.xyz / w.w - cameraPosition; gl_Position = vec4(position.xy, 1.0, 1.0); }`;
+const SKY_FS = /* glsl */`
+${COMMON}
+uniform int uNo25;
+varying vec3 vDir;
+vec3 skyCol(vec3 rd){
+  float mu = dot(rd, uSunDir);
+  float y = clamp(rd.y, 0.0, 1.0);
+  vec3 c = mix(uHorizon, uZenith, pow(y, 0.42));
+  c = mix(c, uHorizon * 1.08, exp(-max(rd.y, 0.0) * 28.0) * 0.6);          // bright haze band at the horizon
+  c += uSunColor * (0.025 + 0.16 * pow(max(mu, 0.0), 6.0) + 0.5 * pow(max(mu, 0.0), 80.0)) * (1.0 - uStorm * 0.8);
+  c += uSunColor * smoothstep(0.99985, 0.99995, mu) * 60.0 * (1.0 - uStorm);
+  return c;
+}
+void main(){
+  vec3 rd = normalize(vDir);
+  vec3 c = skyCol(rd);
+  // ---- 2.5D cloud layer: density at plane intersection, lit by density difference toward the sun
+  if (rd.y > 0.0 && uNo25 == 0){
+    float tC = (5200.0 - cameraPosition.y) / max(rd.y, 0.015);
+    vec2 cp = cameraPosition.xz + rd.xz * tC;
+    float d0 = cloudDens(cp, uCloudCov) * smoothstep(0.02, 0.16, rd.y + uStorm * 0.1);
+    if (d0 > 0.0){
+      float d1 = cloudDens(cp + uSunDir.xz * 420.0, uCloudCov);
+      float d2 = cloudDens(cp + uSunDir.xz * 1100.0, uCloudCov);
+      float lit = clamp(1.0 - (d1 * 0.55 + d2 * 0.45) * 0.9 + 0.25, 0.0, 1.0);
+      vec3 base = mix(vec3(0.42, 0.50, 0.62), vec3(0.32, 0.35, 0.40), uCloudDark) * 1.6;
+      vec3 top = mix(uSunColor * 0.75 + uSkyAmb * 0.6, vec3(0.55, 0.58, 0.63) * 1.4, uCloudDark);
+      vec3 cc = mix(base, top, lit);
+      cc += uSunColor * pow(max(dot(rd, uSunDir), 0.0), 12.0) * 0.5 * (1.0 - d0) * (1.0 - uStorm);   // silver lining
+      float fade = exp(-tC * 0.000028);
+      float a = d0 * mix(0.15, 1.0, fade) ;
+      c = mix(c, mix(c, cc, 0.6 + 0.4 * fade), a);
+    }
+  }
+  gl_FragColor = vec4(c, 1.0);
+}`;
+const skyGeo = new THREE.BufferGeometry();
+skyGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3));
+const skyMat = new THREE.ShaderMaterial({ uniforms: { ...U, uInvVP: { value: new THREE.Matrix4() }, uNo25: { value: Q.get('no25') ? 1 : 0 } }, vertexShader: SKY_VS, fragmentShader: SKY_FS, depthWrite: false, depthTest: true });
+const skyMesh = new THREE.Mesh(skyGeo, skyMat); skyMesh.frustumCulled = false; skyMesh.renderOrder = 1000;
+scene.add(skyMesh);
+
+// ---------------------------------------------------------------- cumulus billboards + wisps hugging the wall
+// Each cloud is a camera-facing quad far away; shape = cauliflower dome (billow fbm) with a flat base,
+// lit brighter toward the top and the sun side, thin edges glow (silver lining). Depth-tested vs mountains.
+const CLOUD_VS = /* glsl */`
+attribute vec4 aCloud;   // centre xyz + half width
+attribute vec4 aCloud2;  // seed, height ratio, kind, drift
+uniform vec3 uCamR, uCamU; uniform float uTime; uniform vec3 uWind;
+varying vec2 vUv; varying vec4 vInfo; varying vec3 vW;
+void main(){
+  vec3 c = aCloud.xyz + vec3(uTime * (2.0 + uWind.x * 1.5) * aCloud2.w, 0.0, uTime * uWind.z * aCloud2.w);
+  vec3 w = c + uCamR * position.x * aCloud.w + uCamU * position.y * aCloud.w * aCloud2.y;
+  vUv = position.xy; vInfo = aCloud2; vW = w;
+  gl_Position = projectionMatrix * viewMatrix * vec4(w, 1.0);
+}`;
+const CLOUD_FS = /* glsl */`
+${COMMON}
+uniform vec3 uCamR, uCamU, uCamB; uniform int uCl;
+varying vec2 vUv; varying vec4 vInfo; varying vec3 vW;
+float hsh(float n){ return fract(sin(n) * 43758.5453); }
+float billow(vec2 p){ float b = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ float n = texture2D(uNoise, p * 0.03125).r; b += a * (1.0 - abs(2.0 * n - 1.0)); p = mat2(1.7, 1.1, -1.1, 1.7) * p + 3.7; a *= 0.5; } return b / 0.9375; }
+// cumulus as a mound of noisy puffs: per-pixel the dominant puff gives a 3D normal for lighting
+void main(){
+  float hr = vInfo.y, seed = floor(vInfo.x * 113.0 + 0.5);   // integer seed: hashing interpolated varyings speckles
+  vec2 q = vec2(vUv.x, vUv.y * hr);                    // isotropic cloud space, x in [-1,1]
+  float base = -hr * 0.62;
+  float bn = billow(q * 5.0 + seed);
+  float wsum = 1e-6; vec2 nsum = vec2(0.0);
+  for (int i = 0; i < 10; i++){
+    float fi = float(i);
+    float layer = fi < 4.0 ? 0.0 : (fi < 7.0 ? 1.0 : (fi < 9.0 ? 2.0 : 3.0));
+    float spread = 0.70 * (1.0 - layer * 0.24);
+    float r = (0.30 - layer * 0.045) * (0.8 + 0.4 * hsh(seed + fi * 7.1));
+    vec2 c = vec2((hsh(seed + fi * 3.7) * 2.0 - 1.0) * spread, base + r * 0.75 + layer * 0.16 * (0.85 + 0.3 * hsh(seed + fi * 1.3)));
+    vec2 rel = (q - c) / r;
+    float w = exp(-7.0 * length(rel));               // soft union of puffs (smooth-min) + blended normals
+    wsum += w; nsum += w * rel;
+  }
+  float best = -log(wsum) / 7.0;
+  float dd = best + (bn - 0.55) * 0.42;                // cauliflower edges
+  float dens = 1.0 - smoothstep(0.70, 0.92, dd);
+  dens *= smoothstep(base - 0.01, base + 0.05, q.y + (bn - 0.5) * 0.03);   // flat, slightly ragged base
+  if (dens < 0.004) discard;
+  vec2 n2 = nsum / wsum; n2 /= max(1.0, length(n2));
+  vec3 n3 = normalize(vec3(n2, sqrt(max(1.0 - dot(n2, n2), 0.05))) + vec3((bn - 0.5) * 0.6, (bn - 0.5) * 0.3, 0.0));
+  vec3 N = normalize(uCamR * n3.x + uCamU * n3.y + uCamB * n3.z);
+  float dif = clamp(dot(N, uSunDir) * 0.65 + 0.35, 0.0, 1.0);
+  float hgt = smoothstep(base, base + hr * 0.9, q.y);
+  float edge = smoothstep(0.75, 1.0, dd) * smoothstep(0.0, 1.0, dot(N, uSunDir) + 0.3);
+  vec3 sun = uSunColor * (1.0 - 0.75 * uCloudDark);
+  vec3 col = sun * dif * 0.78 + uSkyAmb * mix(0.8, 1.6, hgt) + sun * edge * 0.4;
+  col = mix(col, vec3(0.50, 0.53, 0.58) * 1.2, uCloudDark * 0.6);
+  col = mix(col, atmo(col, vW), 0.4);
+  float a = dens * (1.0 - 0.5 * uStorm);
+  gl_FragColor = vec4(col * a, a);
+}`;
+function buildClouds() {
+  // [x, y(alt), d, width, heightRatio, kind, drift]
+  const C = [   // [x, altitude, d, halfWidth, heightRatio, kind, drift]
+    [-27000, 3300, 33000, 4200, 0.55, 0, 1], [-21000, 3900, 30000, 3300, 0.6, 0, 1], [-33000, 3000, 38000, 5200, 0.5, 0, 1],
+    [-15500, 4300, 28000, 2800, 0.62, 0, 1], [-9000, 5200, 30000, 3000, 0.6, 0, 1], [-3500, 5600, 32000, 3400, 0.5, 0, 1],
+    [-12000, 3500, 21000, 1800, 0.6, 0, 1], [-24000, 4600, 31000, 2600, 0.55, 0, 1], [2500, 6000, 31000, 3200, 0.5, 0, 1],
+    [-6500, 4500, 24000, 1900, 0.6, 0, 1], [-38000, 3600, 40000, 4000, 0.5, 0, 1],
+  ];
+  const pos = [], a1 = [], a2 = [], idx = [];
+  const r = mulberry32(99);
+  C.forEach((c, i) => {
+    const b = i * 4, seed = r();
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([x, y]) => { pos.push(x, y, 0); a1.push(c[0], c[1], -c[2], c[3]); a2.push(seed, c[4], c[5], c[6]); });
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aCloud', new THREE.Float32BufferAttribute(a1, 4));
+  g.setAttribute('aCloud2', new THREE.Float32BufferAttribute(a2, 4));
+  g.setIndex(idx);
+  const m = new THREE.Mesh(g, new THREE.ShaderMaterial({ uniforms: { ...U, uCamR: { value: AX_R }, uCamU: { value: AX_U }, uCamB: { value: AX_B }, uCl: { value: parseInt(Q.get('cl') || '0') } },
+    vertexShader: CLOUD_VS, fragmentShader: CLOUD_FS, transparent: true, depthWrite: false, depthTest: true,
+    blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor, blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor }));
+  m.frustumCulled = false; m.renderOrder = 10;
+  return m;
+}
+const clouds = buildClouds(); scene.add(clouds); if (Q.get('nocl')) clouds.visible = false;
+
+// ---------------------------------------------------------------- conifers (InstancedMesh, multi-tier noisy cones)
+function buildTreeGeometry(tiers, segs, seed) {
+  const r = mulberry32(seed), pos = [], tier = [], idx = [];
+  const trunkH = 0.1;
+  // trunk
+  { const b = pos.length / 3; for (let j = 0; j < 5; j++) { const a = j / 5 * Math.PI * 2; pos.push(Math.cos(a) * 0.022, 0, Math.sin(a) * 0.022); tier.push(-1, 0); pos.push(Math.cos(a) * 0.012, trunkH + 0.12, Math.sin(a) * 0.012); tier.push(-1, 0.2); }
+    for (let j = 0; j < 5; j++) { const j1 = (j + 1) % 5; idx.push(b + j * 2, b + j * 2 + 1, b + j1 * 2, b + j1 * 2, b + j * 2 + 1, b + j1 * 2 + 1); } }
+  for (let k = 0; k < tiers; k++) {
+    const t0 = k / tiers;
+    const yb = trunkH + (1 - trunkH) * t0 * 0.93;
+    const th = (1 - trunkH) / tiers * 1.85;
+    const yt = Math.min(1.0, yb + th);
+    const R = 0.205 * Math.pow(1 - t0, 0.95) + 0.022;
+    const b = pos.length / 3;
+    pos.push(0, yt, 0); tier.push(1, yt);
+    const ph = r() * 6.28;
+    for (let j = 0; j < segs; j++) {
+      const a = j / segs * Math.PI * 2 + ph;
+      const jit = 0.80 + 0.16 * Math.cos(a * 3 + k * 1.7) + 0.22 * (r() - 0.5);       // clumpy branch tips
+      const ro = R * jit, droop = th * (0.15 + 0.25 * r());
+      pos.push(Math.cos(a) * ro * 0.5, yb + th * 0.42, Math.sin(a) * ro * 0.5); tier.push(0.5, yb + th * 0.42);
+      pos.push(Math.cos(a) * ro, yb - droop, Math.sin(a) * ro); tier.push(0.0, yb - droop);
+    }
+    for (let j = 0; j < segs; j++) {
+      const j1 = (j + 1) % segs, m0 = b + 1 + j * 2, o0 = m0 + 1, m1 = b + 1 + j1 * 2, o1 = m1 + 1;
+      idx.push(b, m1, m0); idx.push(m0, m1, o0); idx.push(o0, m1, o1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aTier', new THREE.Float32BufferAttribute(tier, 2));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+const TREE_VS = /* glsl */`
+uniform float uTime; uniform vec3 uWind;
+attribute vec2 aTier; attribute vec4 aVar;   // aVar: x colour var, y seed, z radius scale, w height(m)
+varying vec3 vW; varying vec3 vN; varying vec2 vTier; varying vec4 vVar; varying vec3 vL;
+void main(){
+  vec3 p = position;
+  vec4 w = modelMatrix * instanceMatrix * vec4(p, 1.0);
+  // sway: bend grows with height^2, gusting with a per-tree phase
+  float sway = (0.6 + 0.4 * sin(uTime * 1.3 + aVar.y * 37.0)) * 0.006 * aVar.w;
+  w.xz += uWind.xz * sway * p.y * p.y;
+  vW = w.xyz;
+  vec3 n = normal / vec3(aVar.z * aVar.z, 1.0, aVar.z * aVar.z);   // inverse-transpose of non-uniform scale (up to scale)
+  vN = normalize(mat3(instanceMatrix) * n);
+  vTier = aTier; vVar = aVar; vL = p;
+  gl_Position = projectionMatrix * viewMatrix * w;
+}`;
+const TREE_FS = /* glsl */`
+${COMMON}
+varying vec3 vW; varying vec3 vN; varying vec2 vTier; varying vec4 vVar; varying vec3 vL;
+void main(){
+  vec3 N = normalize(vN);
+  if (!gl_FrontFacing) N = -N;
+  vec3 P = vW;
+  float dist = length(cameraPosition - P);
+  bool trunk = vTier.x < -0.5;
+  vec3 alb = mix(vec3(0.026, 0.055, 0.028), vec3(0.055, 0.10, 0.042), vVar.x * vVar.x);
+  alb = mix(alb, vec3(0.075, 0.11, 0.045), vTier.x * 0.3);           // lighter young growth toward tier centres
+  float ang = atan(vL.z, vL.x);
+  float clump = nR(vec2(ang * 3.0 + vVar.y * 50.0, vL.y * 24.0));
+  alb *= 0.7 + 0.6 * clump;
+  if (trunk) alb = vec3(0.06, 0.04, 0.025);
+  float occl = mix(0.35, 1.0, smoothstep(0.0, 0.9, vTier.y)) * mix(0.55, 1.0, 1.0 - vTier.x * 0.6);
+  if (!gl_FrontFacing) occl *= 0.4;
+  // snow gathers on the upper faces of the branch tiers, in clumps; outer drooping tips stay green
+  float C = uCoverage;
+  float sAmt = C * 1.1 - 0.58 + (smoothstep(0.25, 0.85, N.y) - 0.5) * 0.9 + (clump - 0.5) * 1.0 - (1.0 - vTier.x) * 0.3;
+  float snow = trunk || !gl_FrontFacing ? 0.0 : smoothstep(0.0, 0.25, sAmt) * smoothstep(-0.1, 0.4, N.y);
+  float ndl = dot(N, uSunDir);
+  float sh = sunShadow(P, N) * cloudShadow(P);
+  vec3 amb = ambient(N) * occl;
+  vec3 col = alb * (uSunColor * (max(ndl, 0.0) * 0.85 + 0.15) * sh * occl + amb);
+  vec3 sCol = vec3(0.88, 0.92, 0.97) * (uSunColor * clamp((ndl + 0.3) / 1.3, 0.0, 1.0) * sh + amb * 1.3);
+  col = mix(col, sCol, snow);
+  col = atmo(col, P);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+const treeMat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: TREE_VS, fragmentShader: TREE_FS, side: THREE.DoubleSide });
+const treeGeoNear = buildTreeGeometry(10, 14, 11), treeGeoFar = buildTreeGeometry(5, 7, 12);
+
+function placeTrees() {
+  const rng = mulberry32(4242);
+  const near = [], far = [];
+  for (let d = 130; d < 5200;) {
+    const cell = 7 + d * 0.0045;
+    const half = d * 0.86 + 60;
+    for (let x = -half; x < half; x += cell) {
+      const px = x + (rng() - 0.5) * cell * 0.9, pd = d + (rng() - 0.5) * cell * 0.9;
+      const rnd = rng();
+      const e = uplift(px, pd); if (e > 900) continue;
+      const h = heightAt(px, -pd);
+      const hx = heightAt(px + 3, -pd), hz = heightAt(px, -pd - 3);
+      const ny = 1 / Math.hypot((hx - h) / 3, 1, (hz - h) / 3);
+      let f = forestDensity(px, pd, h, ny);
+      f = Math.max(f, 0.012 * smooth(0.85, 0.95, ny) * (pd > 200 ? 1 : 0));         // lone trees on the pasture
+      if (h > 2350 || rnd > f) continue;
+      const H = 9 + 18 * rng() * rng() + 7 * f * rng();
+      const rec = { x: px, y: h - 0.5, z: -pd, H, w: 0.75 + 0.4 * rng(), rot: rng() * 6.28, cv: rng(), seed: rng() };
+      (Math.hypot(px, pd) < 900 ? near : far).push(rec);
+    }
+    d += cell;
+  }
+  const mk = (geo, list) => {
+    const m = new THREE.InstancedMesh(geo, treeMat, list.length); m.frustumCulled = false;
+    const var4 = new Float32Array(list.length * 4), M = new THREE.Matrix4(), Qn = new THREE.Quaternion(), S = new THREE.Vector3(), T = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
+    list.forEach((t, i) => { Qn.setFromAxisAngle(Y, t.rot); S.set(t.H * t.w, t.H, t.H * t.w); T.set(t.x, t.y, t.z); M.compose(T, Qn, S); m.setMatrixAt(i, M);
+      var4[i * 4] = t.cv; var4[i * 4 + 1] = t.seed; var4[i * 4 + 2] = t.w; var4[i * 4 + 3] = t.H; });
+    geo.setAttribute('aVar', new THREE.InstancedBufferAttribute(var4, 4));
+    m.instanceMatrix.needsUpdate = true; return m;
+  };
+  const a = mk(treeGeoNear, near), b = mk(treeGeoFar, far);
+  window.__treeCount = [near.length, far.length];
+  return [a, b];
+}
+const tB = performance.now();
+const trees = placeTrees(); scene.add(...trees);
+window.__timing.trees = Math.round(performance.now() - tB);
+
+// ---------------------------------------------------------------- chalets
+function buildChaletGeometry() {
+  const pos = [], mat = [], idx = [];
+  const quad = (a, b, c, d, m) => { const i = pos.length / 3; pos.push(...a, ...b, ...c, ...d); mat.push(m, m, m, m); idx.push(i, i + 1, i + 2, i, i + 2, i + 3); };
+  const tri = (a, b, c, m) => { const i = pos.length / 3; pos.push(...a, ...b, ...c); mat.push(m, m, m); idx.push(i, i + 1, i + 2); };
+  const W = 0.5, D = 0.5, Hw = 0.55, Hr = 0.9, ov = 0.1;
+  // walls (stone base 0..0.15 drawn same mesh, material by height in shader)
+  quad([-W, 0, D], [W, 0, D], [W, Hw, D], [-W, Hw, D], 0);
+  quad([W, 0, -D], [-W, 0, -D], [-W, Hw, -D], [W, Hw, -D], 0);
+  quad([W, 0, D], [W, 0, -D], [W, Hw, -D], [W, Hw, D], 0);
+  quad([-W, 0, -D], [-W, 0, D], [-W, Hw, D], [-W, Hw, -D], 0);
+  tri([W, Hw, D], [W, Hw, -D], [W, Hr, 0], 0);
+  tri([-W, Hw, -D], [-W, Hw, D], [-W, Hr, 0], 0);
+  // roof (overhanging)
+  const e = Hw - 0.06;
+  quad([-W - ov, e, D + ov], [W + ov, e, D + ov], [W + ov, Hr + 0.02, 0], [-W - ov, Hr + 0.02, 0], 1);
+  quad([W + ov, e, -D - ov], [-W - ov, e, -D - ov], [-W - ov, Hr + 0.02, 0], [W + ov, Hr + 0.02, 0], 1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('aMat', new THREE.Float32BufferAttribute(mat, 1));
+  g.setIndex(idx); g.computeVertexNormals();
+  return g.toNonIndexed();
+}
+const CHALET_VS = /* glsl */`
+attribute float aMat; varying vec3 vW; varying vec3 vN; varying float vMat; varying vec3 vL;
+void main(){ vec4 w = modelMatrix * instanceMatrix * vec4(position, 1.0); vW = w.xyz; vN = normalize(mat3(instanceMatrix) * normal); vMat = aMat; vL = position; gl_Position = projectionMatrix * viewMatrix * w; }`;
+const CHALET_FS = /* glsl */`
+${COMMON}
+varying vec3 vW; varying vec3 vN; varying float vMat; varying vec3 vL;
+void main(){
+  vec3 N = normalize(vN); if (!gl_FrontFacing) N = -N;
+  vec3 P = vW;
+  vec3 alb;
+  if (vMat > 0.5) alb = vec3(0.13, 0.11, 0.10) * (0.85 + 0.3 * nR(vec2(vL.x * 40.0, vL.y * 90.0)));    // weathered shingles
+  else alb = (vL.y < 0.12 ? vec3(0.20, 0.19, 0.18) : vec3(0.16, 0.085, 0.04) * (0.8 + 0.4 * nG(vec2(vL.x * 6.0 + vL.z * 6.0, vL.y * 120.0))));
+  float win = step(0.2, vL.y) * step(vL.y, 0.36) * step(0.5, fract((vL.x + vL.z) * 3.0 + 0.25)) * step(abs(N.y), 0.3);
+  alb = mix(alb, vec3(0.02, 0.025, 0.03), win * 0.85);
+  float C = uCoverage;
+  float snow = vMat > 0.5 ? smoothstep(0.08, 0.35, C * 1.2 + (nR(vL.xz * 30.0) - 0.5) * 0.25) : smoothstep(0.75, 1.0, C) * step(vL.y, 0.06 + 0.1 * C);
+  float ndl = dot(N, uSunDir);
+  float sh = sunShadow(P, N) * cloudShadow(P);
+  vec3 amb = ambient(N);
+  vec3 col = alb * (uSunColor * max(ndl, 0.0) * sh + amb);
+  vec3 sCol = vec3(0.9, 0.93, 0.97) * (uSunColor * clamp((ndl + 0.25) / 1.25, 0.0, 1.0) * sh + amb * 1.2);
+  col = mix(col, sCol, snow);
+  gl_FragColor = vec4(atmo(col, P), 1.0);
+}`;
+const chaletMat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: CHALET_VS, fragmentShader: CHALET_FS, side: THREE.DoubleSide });
+function placeChalets() {
+  const rng = mulberry32(777), spots = [520, 600, 690, 760, 840, 980, 1120, 1300, 1450, 610];
+  const list = [];
+  spots.forEach((d, i) => {
+    const side = (i % 2 ? 1 : -1) * (16 + 22 * rng());
+    const x = path1X(d) + side;
+    const h = Math.min(heightAt(x - 5, -d), heightAt(x + 5, -d), heightAt(x, -d - 4), heightAt(x, -d + 4));
+    const s = 8 + 5 * rng();
+    list.push({ x, y: h - 0.3, z: -d, s, rot: Math.atan(0.3) + (rng() - 0.5) * 0.8 + (i % 3) * 1.57 });
+  });
+  const m = new THREE.InstancedMesh(buildChaletGeometry(), chaletMat, list.length); m.frustumCulled = false;
+  const M = new THREE.Matrix4(), Qn = new THREE.Quaternion(), S = new THREE.Vector3(), T = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
+  list.forEach((c, i) => { Qn.setFromAxisAngle(Y, c.rot); S.set(c.s * 1.35, c.s * 0.95, c.s); T.set(c.x, c.y, c.z); M.compose(T, Qn, S); m.setMatrixAt(i, M); });
+  return m;
+}
+const chalets = placeChalets(); scene.add(chalets);
+
+// ---------------------------------------------------------------- foreground grass blades on the knoll
+function buildGrass() {
+  const rng = mulberry32(31337);
+  const N = 70000;
+  const base = new Float32Array(N * 4), prm = new Float32Array(N * 4);
+  let n = 0;
+  for (let tries = 0; tries < N * 6 && n < N; tries++) {
+    const d = 4 + Math.pow(rng(), 1.7) * 60;
+    const x = (rng() * 2 - 1) * (d * 0.75 + 2);
+    const edge = knollEdge(x);
+    if (d > edge + 1.0) continue;
+    const h = heightAt(x, -d);
+    if (h < CAM_Y - 12) continue;
+    base[n * 4] = x; base[n * 4 + 1] = h; base[n * 4 + 2] = -d; base[n * 4 + 3] = rng() * 6.283;
+    prm[n * 4] = 0.12 + 0.3 * rng() * rng() + 0.08 * rng(); prm[n * 4 + 1] = 0.6 + 0.8 * rng(); prm[n * 4 + 2] = rng(); prm[n * 4 + 3] = rng();
+    n++;
+  }
+  // blade: 3 segments + tip (7 verts)
+  const pos = [], idx = [];
+  const segs = 3;
+  for (let s = 0; s <= segs; s++) { const t = s / segs; if (s < segs) { pos.push(-1, t, 0, 1, t, 0); } else pos.push(0, 1, 0); }
+  for (let s = 0; s < segs - 1; s++) { const a = s * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+  idx.push((segs - 1) * 2, (segs - 1) * 2 + 1, segs * 2);
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.setAttribute('aBase', new THREE.InstancedBufferAttribute(base.subarray(0, n * 4), 4));
+  g.setAttribute('aPrm', new THREE.InstancedBufferAttribute(prm.subarray(0, n * 4), 4));
+  g.instanceCount = n;
+  return g;
+}
+const GRASS_VS = /* glsl */`
+uniform float uTime, uCoverage; uniform vec3 uWind;
+attribute vec4 aBase; attribute vec4 aPrm;   // base xyz + rot ; height, lean, colour var, seed
+varying vec3 vW; varying vec3 vN; varying float vT; varying vec4 vPrm; varying float vH;
+void main(){
+  float t = position.y;
+  float H = aPrm.x;
+  float dist = length(aBase.xyz - cameraPosition);
+  float w = 0.006 * (1.0 - t * 0.85) * (1.0 + dist * 0.06);
+  vec2 dir = vec2(cos(aBase.w), sin(aBase.w));
+  vec2 side = vec2(-dir.y, dir.x);
+  // bending: rest lean + wind + travelling gust wave
+  float gust = sin(dot(aBase.xz, vec2(0.35, 0.22)) - uTime * 2.3 + aPrm.w * 2.0) * 0.5 + 0.5;
+  vec2 bend = dir * (0.25 * aPrm.y) + uWind.xz * (0.035 + 0.05 * gust) + vec2(sin(uTime * 3.1 + aPrm.w * 30.0), cos(uTime * 2.7 + aPrm.w * 20.0)) * 0.03;
+  float bl = length(bend);
+  vec2 off = bend * t * t * H;
+  float y = t * H * (1.0 - 0.35 * min(bl, 1.2) * t);
+  vec3 p = vec3(aBase.x + side.x * position.x * w + off.x, aBase.y + y - 0.02, aBase.z + side.y * position.x * w + off.y);
+  vW = p; vT = t; vPrm = aPrm; vH = y;
+  vN = normalize(vec3(-bend.x * 0.6 + side.x * position.x * 0.3, 1.0, -bend.y * 0.6 + side.y * position.x * 0.3));
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}`;
+const GRASS_FS = /* glsl */`
+${COMMON}
+varying vec3 vW; varying vec3 vN; varying float vT; varying vec4 vPrm; varying float vH;
+void main(){
+  vec3 N = normalize(vN);
+  vec3 P = vW;
+  vec3 alb = mix(vec3(0.07, 0.14, 0.02), vec3(0.34, 0.42, 0.07), vT);
+  alb = mix(alb, vec3(0.42, 0.38, 0.13), vPrm.z * vPrm.z * 0.6);
+  float C = uCoverage;
+  float depthS = C * 0.32 * (0.7 + 0.6 * nR(P.xz * 3.0));               // snow depth on the ground
+  float snow = 1.0 - smoothstep(depthS - 0.01, depthS + 0.01, vH);
+  snow = max(snow, smoothstep(0.5, 1.0, C) * 0.35 * smoothstep(0.6, 1.0, vT) * step(0.6, vPrm.w));  // a few caught tufts
+  float ndl = max(dot(N, uSunDir), 0.0);
+  float sh = sunShadow(P, vec3(0, 1, 0)) * cloudShadow(P);
+  vec3 amb = ambient(N) * mix(0.45, 1.0, vT);
+  vec3 col = alb * (uSunColor * (ndl * 0.8 + 0.25) * sh * mix(0.6, 1.0, vT) + amb);
+  col += alb * uSunColor * pow(max(dot(normalize(P - cameraPosition), uSunDir), 0.0), 3.0) * 0.6 * sh;   // translucency
+  vec3 sCol = vec3(0.9, 0.93, 0.97) * (uSunColor * 0.8 * sh + ambient(vec3(0, 1, 0)) * 1.2);
+  col = mix(col, sCol, snow);
+  gl_FragColor = vec4(atmo(col, P), 1.0);
+}`;
+const grassMat = new THREE.ShaderMaterial({ uniforms: U, vertexShader: GRASS_VS, fragmentShader: GRASS_FS, side: THREE.DoubleSide });
+const grassMesh = new THREE.Mesh(buildGrass(), grassMat); grassMesh.frustumCulled = false;
+scene.add(grassMesh);
+
+// ---------------------------------------------------------------- sun shadow maps (static sun -> rendered once)
+const shadowMat = new THREE.ShaderMaterial({
+  vertexShader: `void main(){ vec4 p = vec4(position, 1.0);
+    #ifdef USE_INSTANCING
+      p = instanceMatrix * p;
+    #endif
+    gl_Position = projectionMatrix * viewMatrix * modelMatrix * p; }`,
+  fragmentShader: `void main(){ gl_FragColor = vec4(1.0); }`, side: THREE.DoubleSide });
+function makeShadow(size, boxMin, boxMax) {
+  const rt = new THREE.WebGLRenderTarget(size, size, { depthBuffer: true });
+  rt.depthTexture = new THREE.DepthTexture(size, size, THREE.UnsignedIntType);
+  rt.depthTexture.minFilter = rt.depthTexture.magFilter = THREE.NearestFilter;
+  const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 2);
+  const ctr = new THREE.Vector3().addVectors(boxMin, boxMax).multiplyScalar(0.5);
+  cam.position.copy(ctr).addScaledVector(SUN, 60000); cam.up.set(0, 1, 0); cam.lookAt(ctr); cam.updateMatrixWorld();
+  const inv = cam.matrixWorldInverse;
+  let mnx = 1e9, mny = 1e9, mnz = 1e9, mxx = -1e9, mxy = -1e9, mxz = -1e9;
+  for (let i = 0; i < 8; i++) { const v = new THREE.Vector3(i & 1 ? boxMax.x : boxMin.x, i & 2 ? boxMax.y : boxMin.y, i & 4 ? boxMax.z : boxMin.z).applyMatrix4(inv);
+    mnx = Math.min(mnx, v.x); mxx = Math.max(mxx, v.x); mny = Math.min(mny, v.y); mxy = Math.max(mxy, v.y); mnz = Math.min(mnz, v.z); mxz = Math.max(mxz, v.z); }
+  cam.left = mnx; cam.right = mxx; cam.bottom = mny; cam.top = mxy; cam.near = -mxz - 100; cam.far = -mnz + 100; cam.updateProjectionMatrix();
+  return { rt, cam, mat: new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse) };
+}
+function renderShadows() {
+  const sN = makeShadow(2048, new THREE.Vector3(-2400, 1650, -3400), new THREE.Vector3(2600, 2150, 0));
+  const sF = makeShadow(2048, new THREE.Vector3(-16000, 900, -30000), new THREE.Vector3(9000, 4300, -1000));
+  scene.overrideMaterial = shadowMat;
+  skyMesh.visible = false; grassMesh.visible = false; clouds.visible = false;
+  renderer.setRenderTarget(sN.rt); renderer.setClearColor(0xffffff, 1); renderer.clear(); renderer.render(scene, sN.cam);
+  trees.forEach(t => t.visible = false); chalets.visible = false;
+  renderer.setRenderTarget(sF.rt); renderer.clear(); renderer.render(scene, sF.cam);
+  trees.forEach(t => t.visible = true); chalets.visible = true;
+  scene.overrideMaterial = null; skyMesh.visible = true; grassMesh.visible = true; clouds.visible = true;
+  renderer.setRenderTarget(null);
+  U.uShadowN.value = sN.rt.depthTexture; U.uShadowF.value = sF.rt.depthTexture;
+  U.uShMatN.value.copy(sN.mat); U.uShMatF.value.copy(sF.mat);
+}
+renderShadows();
+{ const hide = (Q.get('hide') || '').split(','); const objs = { trees: trees, grass: [grassMesh], chalets: [chalets], clouds: [clouds], valley: [valleyMesh], mountain: [mountainMesh], sky: [skyMesh] };
+  hide.forEach(k => (objs[k] || []).forEach(o => o.visible = false)); }
+
+// ---------------------------------------------------------------- SNOW FLAKES
+// Stateless GPU flakes: every position is f(per-flake seeds, time, integrated wind), wrapped inside a
+// camera-aligned box per depth layer. Five layers cross-fade so density is continuous with depth.
+const LAYERS = [
+  { near: 0.25, far: 1.6, fin: 0.08, fout: 0.25, count: 900, minPx: 1.0, gain: 0.8, kind: 0, stormMul: 3 },     // defocused, very near
+  { near: 1.45, far: 6.0, fin: 0.25, fout: 0.8, count: 40000, minPx: 1.0, gain: 1.0, kind: 1, stormMul: 3.5 },  // crisp crystal shapes
+  { near: 5.4, far: 30.0, fin: 0.8, fout: 3.0, count: 150000, minPx: 0.9, gain: 1.3, kind: 2 },    // small flakes
+  { near: 27.0, far: 130.0, fin: 3.0, fout: 12.0, count: 110000, minPx: 0.8, gain: 3.2, kind: 3 }, // soft points
+  { near: 118.0, far: 420.0, fin: 12.0, fout: 40.0, count: 80000, minPx: 0.75, gain: 7.0, kind: 3 },
+];
+const SNOW_VS = /* glsl */`
+uniform float uTime, uStorm, uDensity, uFadeN, uGain, uKind, uSizeMul;
+uniform vec3 uSunDir, uSunColor, uSkyAmb, uFogCol;
+uniform float uFlakeFog;
+uniform vec3 uBoxCenter, uBoxSize, uAxR, uAxU, uAxB;
+uniform vec3 uDispF, uDispS, uWindF, uWindS;
+uniform float uTurbAmp;
+uniform vec4 uRange;                 // near, far, fadeIn, fadeOut
+uniform vec2 uRes; uniform float uTanHalf, uAspect, uFocus, uAperture, uShutter, uMinPx;
+uniform sampler2D uPush, uPushPrev; uniform float uPushDt;
+attribute vec3 aBase; attribute vec4 aRand; attribute vec4 aProp;   // aProp: type, radius(m), fall(m/s), rank
+varying vec2 vOff; varying vec4 vM; varying vec2 vS; varying vec4 vCol; varying vec4 vInfo; varying float vDepth; varying float vGlint; varying float vFlare; varying vec2 vQ;
+
+// coherent turbulence: sum of transverse travelling waves (k ⟂ displacement dir => divergence free)
+vec3 turb(vec3 q, float t, out vec3 vel){
+  vec3 o = vec3(0.0); vel = vec3(0.0);
+  vec3 K[4]; vec3 D[4]; vec4 A = vec4(0.12, 0.28, 0.55, 0.95); vec4 W = vec4(0.9, 0.55, 0.37, 0.23);
+  K[0] = vec3(0.61, 0.17, -0.42) * 1.9; D[0] = normalize(cross(K[0], vec3(0.2, 1.0, 0.1)));
+  K[1] = vec3(-0.33, 0.29, 0.55) * 0.95; D[1] = normalize(cross(K[1], vec3(1.0, 0.3, 0.2)));
+  K[2] = vec3(0.21, -0.12, 0.17) * 1.1; D[2] = normalize(cross(K[2], vec3(0.1, 0.4, 1.0)));
+  K[3] = vec3(-0.08, 0.05, -0.11) * 1.0; D[3] = normalize(cross(K[3], vec3(0.0, 1.0, 0.3)));
+  for (int i = 0; i < 4; i++){
+    float ph = dot(q, K[i]) + t * W[i] + float(i) * 1.7;
+    o += D[i] * A[i] * sin(ph);
+    vel += D[i] * A[i] * W[i] * cos(ph);
+  }
+  return o;
+}
+void main(){
+  float vis = clamp((uDensity - aProp.w) * uFadeN, 0.0, 1.0);
+  vec4 OUT = vec4(2.0, 2.0, 2.0, 1.0);
+  if (vis <= 0.0){ gl_Position = OUT; return; }
+  float rad = aProp.y * uSizeMul * (1.0 - 0.3 * uStorm), fall = aProp.z * (1.0 + 0.25 * uStorm);   // blizzard: smaller, wind-broken crystals
+  // light flakes follow the fast-filtered wind, heavy clumps the slow one (per-flake inertia)
+  float inertia = clamp((rad - 0.003) / 0.02, 0.0, 1.0);
+  float resp = 0.78 + 0.44 * aRand.x;
+  vec3 disp = mix(uDispF, uDispS, inertia) * resp;
+  vec3 wv = mix(uWindF, uWindS, inertia) * resp;
+  // flutter / spiral descent (0.5..2 Hz)
+  float w = mix(3.1, 12.5, aRand.y);
+  float ph = aRand.z * 6.2831853 + uTime * w;
+  float R = mix(0.015, 0.16, aRand.w) * (1.0 + 0.8 * uStorm) * (aProp.x > 0.5 && aProp.x < 1.5 ? 0.6 : 1.0);
+  vec3 flut = R * vec3(cos(ph), 0.3 * sin(2.0 * ph), sin(ph));
+  vec3 flutV = R * w * vec3(-sin(ph), 0.6 * cos(2.0 * ph), cos(ph));
+  vec3 move = disp + flut - vec3(0.0, fall * uTime, 0.0);
+  vec3 loc = aBase * uBoxSize + vec3(dot(move, uAxR), dot(move, uAxU), dot(move, uAxB));
+  loc = mod(loc, uBoxSize) - 0.5 * uBoxSize;
+  vec3 P = uBoxCenter + loc.x * uAxR + loc.y * uAxU + loc.z * uAxB;
+  vec3 tv; vec3 to = turb(P, uTime, tv) * uTurbAmp;
+  P += to;
+  vec3 vel = wv + flutV + tv * uTurbAmp - vec3(0.0, fall, 0.0);
+
+  vec4 vp = viewMatrix * vec4(P, 1.0);
+  float depth = -vp.z;
+  float fade = smoothstep(uRange.x - uRange.z, uRange.x + uRange.z, depth) * (1.0 - smoothstep(uRange.y - uRange.w, uRange.y + uRange.w, depth));
+  if (fade * vis < 0.002 || depth < 0.12){ gl_Position = OUT; return; }
+
+  // ---- mouse push: screen-space displacement field (advected with the mean flow), scaled to this depth
+  vec2 s = vp.xy / depth;                                    // tan-space screen position
+  vec2 ndc = s / vec2(uTanHalf * uAspect, uTanHalf);
+  vec2 suv = ndc * 0.5 + 0.5;
+  float pw = 1.0 / (1.0 + depth * 0.05);
+  vec2 push = texture2D(uPush, suv).xy * 2.0, pushP = texture2D(uPushPrev, suv).xy * 2.0;
+  vec2 toView = vec2(uTanHalf * uAspect, uTanHalf) * depth * pw;
+  vp.xy += push * toView;
+  vec3 vv = (viewMatrix * vec4(vel, 0.0)).xyz;
+  vv.xy += (push - pushP) / max(uPushDt, 1e-3) * toView;
+  s = vp.xy / depth;
+
+  // ---- screen footprint (px), defocus, streak
+  float pxu = uRes.y / (2.0 * uTanHalf);
+  vec2 cPx = s * pxu;
+  float rPhys = rad / depth * pxu;
+  float coc = uAperture * max(1.0 / depth - 1.0 / uFocus, 0.0) * pxu;   // near-field defocus only (scene is sharp)
+  float rDraw = max(rPhys, uMinPx);
+  float rTot = sqrt(rDraw * rDraw + coc * coc);
+  float energy = (rPhys * rPhys) / (rTot * rTot) * uGain;
+  vec2 ds = (vv.xy + s * vv.z) / depth;                      // d(screen)/dt in tan units
+  vec2 streak = ds * pxu * uShutter;
+  float sl = length(streak);
+  if (sl > 120.0){ streak *= 120.0 / sl; sl = 120.0; }
+
+  // ---- tumbling plate: normal n, projected squash |n.v| along n's screen direction, glints
+  float tr = mix(0.25, 1.4, aRand.y) * (1.0 + 1.5 * uStorm);
+  float th = aRand.z * 6.2831853 + uTime * tr;
+  float tilt = mix(0.25, 1.25, fract(aRand.w * 3.7)) + 0.35 * sin(uTime * tr * 1.7 + aRand.x * 20.0);
+  vec3 n = vec3(sin(tilt) * cos(th), cos(tilt), sin(tilt) * sin(th));
+  vec3 Vw = normalize(cameraPosition - P);
+  float ndv = dot(n, Vw);
+  float blurMix = coc / max(rTot, 1e-3);
+  float squash = mix(max(abs(ndv), 0.42), 1.0, blurMix);   // edge-on plates read as needles; keep them a little open
+  if (aProp.x > 0.5 && aProp.x < 1.5) squash = mix(squash, 1.0, 0.55);     // clumps are roundish
+  vec3 nv = (viewMatrix * vec4(n, 0.0)).xyz;
+  vec2 sa = nv.xy; float sal = length(sa); sa = sal > 1e-4 ? sa / sal : vec2(0.0, 1.0);
+  vec2 sb = vec2(-sa.y, sa.x);
+  float spin = aRand.x * 6.2831853 + uTime * mix(-1.1, 1.1, aRand.w);
+  float cs = cos(spin), sn = sin(spin);
+  vec2 r0 = sb / rTot, r1 = sa / (rTot * squash);
+  vM = vec4(cs * r0 - sn * r1, sn * r0 + cs * r1);
+
+  // quad: covers the flake swept along its streak
+  vec2 ax = sl > 1e-3 ? streak / sl : vec2(1.0, 0.0);
+  vec2 ay = vec2(-ax.y, ax.x);
+  vGlint = 0.0;
+  float flare = 0.0;
+  {
+    vec3 Hh0 = normalize(uSunDir + normalize(cameraPosition - P));
+    float g0 = pow(abs(dot(n, Hh0)), 260.0) * (1.0 - 0.85 * uStorm) * step(uKind, 2.5) * (aProp.x < 0.5 || aProp.x > 1.5 ? 1.0 : 0.35);
+    flare = clamp(g0 * 3.0, 0.0, 1.0) * clamp(rPhys / 1.2, 0.0, 1.0);
+  }
+  float ext = flare * (6.0 + rTot * 2.5);
+  float hx = 0.5 * sl + rTot + 1.0 + ext, hy = rTot + 1.0 + ext;
+  vec2 off = ax * (position.x * hx) + ay * (position.y * hy) - streak * 0.5;
+  vOff = off; vS = streak; vQ = position.xy;
+  gl_Position = vec4((cPx + off) / (0.5 * uRes), 0.0, 1.0);
+
+  // ---- lighting: sun forward-scatter (HG-ish), sky ambient, fog towards the whiteout colour
+  float mu = dot(-Vw, uSunDir);
+  float fwd = pow(max(mu, 0.0), 5.0);
+  vec3 col = uSunColor * (0.52 + 1.25 * fwd + 0.12 * abs(ndv)) + uSkyAmb * 1.35 + vec3(0.92, 0.95, 1.0) * uStorm * 0.75;
+  vec3 Hh = normalize(uSunDir + Vw);
+  float gl = pow(abs(dot(n, Hh)), 260.0) * (1.0 - 0.85 * uStorm);
+  vGlint = gl * 14.0 * (aProp.x < 0.5 || aProp.x > 1.5 ? 1.0 : 0.3) * step(uKind, 2.5);
+  vFlare = flare;
+  col *= 0.82 + 0.3 * aRand.w;                                  // per-flake brightness variety
+  float T = exp(-depth * uFlakeFog);
+  col = mix(uFogCol, col, T);
+  float alpha = fade * vis * energy * mix(0.55, 1.0, T);
+  vCol = vec4(col, alpha);
+  vInfo = vec4(aProp.x, fract(aRand.x * 7.31 + aRand.y * 3.17), rTot, blurMix);
+  vDepth = depth;
+}`;
+const SNOW_FS = /* glsl */`
+uniform sampler2D uDepth; uniform vec2 uRes; uniform float uNear, uFar, uKind;
+varying vec2 vOff; varying vec4 vM; varying vec2 vS; varying vec4 vCol; varying vec4 vInfo; varying float vDepth; varying float vGlint; varying float vFlare; varying vec2 vQ;
+const float PI = 3.14159265;
+// stellar dendrite: fold polar angle into a 60deg sector + mirror; main arm + 60deg side branches + hex core
+vec2 dendrite(vec2 p, float h, float aa){
+  float r = length(p);
+  if (r > 1.06) return vec2(0.0);
+  float a = atan(p.y, p.x);
+  a = mod(a + PI / 6.0, PI / 3.0) - PI / 6.0;
+  a = abs(a);
+  vec2 q = r * vec2(cos(a), sin(a));
+  float h1 = fract(h * 13.7), h2 = fract(h * 71.3), h3 = fract(h * 5.11);
+  float armW = mix(0.035, 0.075, h1);
+  float d = max(q.y - armW * (1.0 - 0.55 * q.x), q.x - 1.0);
+  float sp = mix(0.13, 0.22, h2), x0 = mix(0.2, 0.34, h3), bl = mix(0.4, 0.8, fract(h * 3.3));
+  vec2 bd = vec2(0.5, 0.8660254);
+  for (int k = 0; k < 5; k++){
+    float xk = x0 + float(k) * sp;
+    if (xk > 0.92) break;
+    vec2 rel = q - vec2(xk, 0.0);
+    float L = (1.0 - xk) * bl;
+    float t = clamp(dot(rel, bd), 0.0, L);
+    d = min(d, length(rel - bd * t) - armW * 0.72 * (1.0 - 0.6 * t / (L + 1e-3)));
+  }
+  float plate = mix(0.1, 0.3, fract(h * 9.7));
+  float dh = dot(q, vec2(0.8660254, 0.5)) - plate;
+  d = min(d, dh);
+  float cov = 1.0 - smoothstep(-aa, aa, d);
+  // bright crystal edges + ridge along each arm + inner hexagon ring
+  float edge = 1.0 - smoothstep(0.0, 0.05, abs(d + 0.02));
+  float ridge = exp(-q.y * q.y / (armW * armW * 0.15)) * step(plate * 1.1, q.x);
+  float ring = 1.0 - smoothstep(0.0, 0.02, abs(dh + plate * 0.35));
+  return vec2(cov, cov * (0.62 + 0.45 * edge + 0.35 * ridge + 0.3 * ring));
+}
+// irregular aggregate (real big flakes are clumps): fluffy noisy core + small stellar crystals sticking out
+float h21(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float vn2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), f.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), f.x), f.y); }
+vec2 aggregate(vec2 p, float h, float aa){
+  float r = length(p);
+  if (r > 1.1) return vec2(0.0);
+  float ang = atan(p.y, p.x);
+  float n1 = vn2(p * 3.2 + h * 17.0), n2 = vn2(p * 8.0 + h * 31.0);
+  float edgeR = 0.56 + 0.16 * sin(ang * 3.0 + h * 20.0) + 0.10 * sin(ang * 5.0 + h * 7.0) + (n1 - 0.5) * 0.32;
+  float core = 1.0 - smoothstep(edgeR - 0.10 - aa * 2.0, edgeR + 0.03 + aa * 2.0, r);
+  vec2 cov = vec2(core * (0.6 + 0.3 * n2), core * (0.5 + 0.55 * n2 * n1 + 0.2 * smoothstep(edgeR - 0.2, edgeR, r)));
+  for (int i = 0; i < 3; i++){
+    float fi = float(i);
+    float a = h * 40.0 + fi * 2.1;
+    vec2 c = vec2(cos(a), sin(a)) * (0.36 + 0.16 * fract(h * 7.0 + fi * 0.3));
+    float sc = 0.46 + 0.16 * fract(h * 13.0 + fi * 0.7);
+    float ca = cos(a * 1.7), sa = sin(a * 1.7);
+    vec2 q = mat2(ca, -sa, sa, ca) * (p - c) / sc;
+    cov = max(cov, dendrite(q, fract(h * 3.3 + fi * 0.37), aa / sc) * 0.92);
+  }
+  return cov;
+}
+vec2 hexPlate(vec2 p, float h, float aa){
+  float a = atan(p.y, p.x); a = mod(a + PI / 6.0, PI / 3.0) - PI / 6.0;
+  vec2 q = length(p) * vec2(cos(a), abs(sin(a)));
+  float d = dot(q, vec2(0.8660254, 0.5)) - 0.75;
+  float cov = 1.0 - smoothstep(-aa, aa, d);
+  float ring = 1.0 - smoothstep(0.0, 0.06, abs(d + 0.22));
+  return vec2(cov, cov * (0.6 + 0.5 * ring + 0.3 * (1.0 - smoothstep(0.0, 0.08, abs(d)))));
+}
+float linDepth(float z){ float n = uNear, f = uFar; return 2.0 * n * f / (f + n - (z * 2.0 - 1.0) * (f - n)); }
+void main(){
+  vec2 suv = gl_FragCoord.xy / uRes;
+  float sz = linDepth(texture2D(uDepth, suv).r);
+  float soft = clamp((sz - vDepth) / (0.1 + vDepth * 0.05), 0.0, 1.0);
+  if (soft <= 0.0) discard;
+  float rTot = vInfo.z;
+  float sl = length(vS);
+  vec2 cov = vec2(0.0);
+  vec2 uv0 = vec2(dot(vM.xy, vOff), dot(vM.zw, vOff));
+  if (uKind > 2.5 || rTot < 2.2 || sl > rTot * 5.0){
+    // tiny: gaussian capsule along the streak (energy-preserving)
+    vec2 b = -vS;
+    float t = clamp(dot(vOff, b) / max(dot(b, b), 1e-4), 0.0, 1.0);
+    vec2 e = vOff - b * t;
+    float g = rTot < 2.2 ? exp(-dot(e, e) / (rTot * rTot * 0.55)) : 1.0 - smoothstep(rTot * 0.35, rTot * 0.95, length(e));
+    float k = (2.0 * rTot) / (2.0 * rTot + sl) * (rTot < 2.2 ? 1.0 : 0.7);
+    // motion-blurred streak: brighter core along the path, tapered ends
+    float tp = smoothstep(0.0, 0.18, t) * (1.0 - smoothstep(0.82, 1.0, t)) * 0.35 + 0.65;
+    cov = vec2(g * k * (sl > rTot ? tp : 1.0));
+  } else if (uKind < 0.5 && vInfo.w > 0.55){
+    // strongly defocused: soft bokeh disc with a faint brighter rim
+    float r = length(uv0);
+    float c = 1.0 - smoothstep(0.72, 1.0, r);
+    cov = vec2(c, c * (0.8 + 0.35 * smoothstep(0.5, 0.9, r)));
+  } else {
+    float aa = 1.3 / (rTot * mix(1.0, 0.5, vInfo.w)) + vInfo.w * 0.6;
+    // motion blur: stratified taps along the streak with per-pixel jitter (noise instead of ghost copies)
+    int taps = int(clamp(ceil(sl / max(rTot * 0.22, 1.2)), 1.0, 12.0));
+    float jit = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));   // interleaved gradient noise
+    float type = vInfo.x;
+    for (int k = 0; k < 12; k++){
+      if (k >= taps) break;
+      float tau = taps > 1 ? (float(k) + jit) / float(taps) : 0.0;
+      vec2 q = vOff + vS * tau;
+      vec2 uv = vec2(dot(vM.xy, q), dot(vM.zw, q));
+      if (type < 0.5) cov += dendrite(uv, vInfo.y, aa);
+      else if (type < 1.5) cov += aggregate(uv, vInfo.y, aa);
+      else cov += hexPlate(uv, vInfo.y, aa);
+    }
+    cov /= float(taps);
+  }
+  float win = 1.0 - smoothstep(0.8, 1.0, max(abs(vQ.x), abs(vQ.y)));   // never show the quad edge
+  cov *= win;
+  float a = cov.x * vCol.a * soft;
+  vec3 c = vCol.rgb * cov.y * vCol.a * soft;
+  c += vGlint * cov.x * soft * (0.5 + 2.5 * exp(-dot(uv0, uv0) * 5.0)) * vCol.rgb * min(vCol.a * 3.0, 1.0);
+  if (vFlare > 0.001){   // sun glint: tiny 4-point star + halo (bloom spreads it further)
+    vec2 o = mat2(0.94, -0.34, 0.34, 0.94) * vOff;
+    float L = 1.0 + (rTot * 0.9 + 2.0) * vFlare;
+    float star = exp(-abs(o.y) * 1.1) * exp(-o.x * o.x / (L * L)) + exp(-abs(o.x) * 1.1) * exp(-o.y * o.y / (L * L));
+    float halo = exp(-dot(o, o) / (rTot * rTot * 1.5 + 2.0));
+    float f = vFlare * (star * 0.9 + halo * 1.4) * soft * win;
+    c += vec3(1.0, 0.97, 0.92) * f * 2.6;
+    a = max(a, 0.0);
+  }
+  gl_FragColor = vec4(c, min(a, 1.0));
+}`;
+const snowScene = new THREE.Scene();
+const pushTex = { a: null, b: null };
+const snowLayers = LAYERS.map((L, li) => {
+  const rng = mulberry32((SEED + 1) * 7919 + li * 104729);
+  const N = L.count;
+  const base = new Float32Array(N * 3), rnd = new Float32Array(N * 4), prop = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++) {
+    base[i * 3] = rng(); base[i * 3 + 1] = rng(); base[i * 3 + 2] = rng();
+    for (let k = 0; k < 4; k++) rnd[i * 4 + k] = rng();
+    const u = rng(); let type, r, f;
+    if (u < 0.46) { type = 0; r = 0.006 + 0.018 * Math.pow(rng(), 1.7); f = 0.5 + 0.35 * rng(); }       // stellar dendrites
+    else if (u < 0.82) { type = 1; r = 0.009 + 0.024 * Math.pow(rng(), 2.0); f = 0.75 + 0.6 * rng(); }  // aggregates (clumps)
+    else { type = 2; r = 0.0025 + 0.004 * rng(); f = 0.85 + 0.5 * rng(); }                              // small plates / grains
+    prop[i * 4] = type; prop[i * 4 + 1] = r; prop[i * 4 + 2] = f; prop[i * 4 + 3] = (i + 0.5) / N;
+  }
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0], 3));
+  g.setIndex([0, 1, 2, 0, 2, 3]);
+  g.setAttribute('aBase', new THREE.InstancedBufferAttribute(base, 3));
+  g.setAttribute('aRand', new THREE.InstancedBufferAttribute(rnd, 4));
+  g.setAttribute('aProp', new THREE.InstancedBufferAttribute(prop, 4));
+  g.instanceCount = 0;
+  const mat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: U.uTime, uStorm: U.uStorm, uSunDir: U.uSunDir, uSunColor: U.uSunColor, uSkyAmb: U.uSkyAmb,
+      uFogCol: { value: new THREE.Vector3() }, uFlakeFog: { value: 0 },
+      uDensity: { value: 0 }, uFadeN: { value: 25 }, uSizeMul: { value: qnum('fscale', 1) }, uGain: { value: L.gain }, uKind: { value: L.kind },
+      uBoxCenter: { value: new THREE.Vector3() }, uBoxSize: { value: new THREE.Vector3(1, 1, 1) },
+      uAxR: { value: AX_R }, uAxU: { value: AX_U }, uAxB: { value: AX_B },
+      uDispF: { value: new THREE.Vector3() }, uDispS: { value: new THREE.Vector3() }, uWindF: { value: new THREE.Vector3() }, uWindS: { value: new THREE.Vector3() },
+      uTurbAmp: { value: 1 },
+      uRange: { value: new THREE.Vector4(L.near, L.far, L.fin, L.fout) },
+      uRes: { value: new THREE.Vector2(1, 1) }, uTanHalf: { value: 0.38 }, uAspect: { value: 1.7 },
+      uFocus: { value: 3.0 }, uAperture: { value: 0.012 }, uShutter: { value: 1 / 90 }, uMinPx: { value: L.minPx },
+      uPush: { value: null }, uPushPrev: { value: null }, uPushDt: { value: 1 / 60 },
+      uDepth: { value: null }, uNear: { value: camera.near }, uFar: { value: camera.far },
+    },
+    vertexShader: SNOW_VS, fragmentShader: SNOW_FS,
+    transparent: true, depthTest: false, depthWrite: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
+    blendSrcAlpha: THREE.OneFactor, blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+  });
+  const mesh = new THREE.Mesh(g, mat); mesh.frustumCulled = false; mesh.renderOrder = -li;   // far layers first
+  snowScene.add(mesh);
+  return { L, mesh, mat, geo: g };
+});
+function layoutSnowBoxes() {
+  const tv = Math.tan(camera.fov * Math.PI / 360), th = tv * camera.aspect;
+  const pitch = BASE_PITCH;
+  snowLayers.forEach(({ L, mat }) => {
+    const n = Math.max(0.05, L.near - L.fin * 1.5), f = L.far + L.fout * 1.5;
+    const mid = (n + f) * 0.5;
+    const marg = 1.5 + f * 0.04;
+    mat.uniforms.uBoxSize.value.set(2 * f * th * 1.1 + marg, 2 * f * tv * 1.1 + marg, f - n + marg);
+    mat.uniforms.uBoxCenter.value.copy(camera.position).addScaledVector(AX_B, -mid);
+    mat.uniforms.uTanHalf.value = tv; mat.uniforms.uAspect.value = camera.aspect;
+  });
+}
+
+// ---------------------------------------------------------------- render targets & post
+const FS_VS = /* glsl */`varying vec2 vUv; void main(){ vUv = position.xy * 0.5 + 0.5; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+const fsScene = new THREE.Scene(), fsCam = new THREE.Camera();
+const fsMesh = new THREE.Mesh(skyGeo, null); fsMesh.frustumCulled = false; fsScene.add(fsMesh);
+function pass(mat, target) { fsMesh.material = mat; renderer.setRenderTarget(target); renderer.render(fsScene, fsCam); }
+const rtOpts = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter };
+let sceneRT, snowRT, compRT, bloomRTs = [];
+const pushRT = [0, 1].map(() => new THREE.WebGLRenderTarget(192, 108, { ...rtOpts }));
+let pushIdx = 0;
+
+const PUSH_FS = /* glsl */`
+uniform sampler2D uPrev; uniform vec2 uTexel; uniform float uDt, uAspect, uActive;
+uniform vec2 uM0, uM1, uMVel, uAdv;
+varying vec2 vUv;
+void main(){
+  vec2 src = vUv - uAdv * uDt;
+  vec2 D = texture2D(uPrev, src).xy * 0.6
+         + 0.1 * (texture2D(uPrev, src + vec2(uTexel.x, 0.0)).xy + texture2D(uPrev, src - vec2(uTexel.x, 0.0)).xy
+                + texture2D(uPrev, src + vec2(0.0, uTexel.y)).xy + texture2D(uPrev, src - vec2(0.0, uTexel.y)).xy);
+  D *= exp(-uDt / 2.4);
+  vec2 asp = vec2(uAspect, 1.0);
+  vec2 pa = (vUv - uM0) * asp, ba = (uM1 - uM0) * asp;
+  float hh = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+  vec2 rel = pa - ba * hh;
+  float R = 0.075;
+  float w = exp(-dot(rel, rel) / (R * R)) * uActive;
+  // displacement injected proportional to the cursor path length (independent of event rate / dt)
+  vec2 mv = uM1 - uM0;
+  D += mv * w * 0.55;
+  // swirl: flakes beside the stroke get dragged along it and curl inward (a pair of counter-rotating eddies)
+  float bl = length(ba);
+  if (bl > 1e-5){
+    vec2 dir = ba / bl, perp = vec2(-dir.y, dir.x);
+    float side = dot(rel, perp) / R;
+    float ring = exp(-dot(rel, rel) / (R * R * 3.0)) * uActive;
+    D += (-perp * side * 0.25) / asp * bl * ring * 0.6;
+  }
+  gl_FragColor = vec4(clamp(D, -0.6, 0.6), 0.0, 1.0);
+}`;
+const pushMat = new THREE.ShaderMaterial({ uniforms: { uPrev: { value: null }, uTexel: { value: new THREE.Vector2(1 / 192, 1 / 108) }, uDt: { value: 0.016 }, uAspect: { value: 1.7 }, uActive: { value: 0 },
+  uM0: { value: new THREE.Vector2(-1, -1) }, uM1: { value: new THREE.Vector2(-1, -1) }, uMVel: { value: new THREE.Vector2() }, uAdv: { value: new THREE.Vector2() } },
+  vertexShader: FS_VS, fragmentShader: PUSH_FS, depthTest: false, depthWrite: false });
+
+const COMP_FS = /* glsl */`
+uniform int uDbg; uniform sampler2D uPushDbg;
+uniform sampler2D uScene, uSnow, uDepth, uNoise; uniform float uNear, uFar, uStorm, uTime, uAspect; uniform vec2 uWindScr; uniform vec3 uVeilCol;
+varying vec2 vUv;
+float linDepth(float z){ float n = uNear, f = uFar; return 2.0 * n * f / (f + n - (z * 2.0 - 1.0) * (f - n)); }
+float nz(vec2 p){ return texture2D(uNoise, p).r; }
+void main(){
+  vec3 sc = texture2D(uScene, vUv).rgb;
+  vec4 sn = texture2D(uSnow, vUv);
+  float zr = texture2D(uDepth, vUv).r;
+  float z = zr >= 0.999999 ? 1e5 : linDepth(zr);
+  // distant snow veil: anisotropic noise curtains falling & sweeping with the wind, deeper = stronger
+  vec2 p = vec2(vUv.x * uAspect, vUv.y);
+  vec2 fallDir = normalize(vec2(uWindScr.x * 0.12, -1.0));
+  mat2 rot = mat2(fallDir.y, -fallDir.x, fallDir.x, fallDir.y);
+  vec2 q = rot * p;
+  float sp = 0.25 + 0.6 * uStorm;
+  float n1 = nz(vec2(q.x * 0.9, q.y * 0.18 + uTime * sp * 0.22) + vec2(0.3, 0.1));
+  float n2 = nz(vec2(q.x * 2.3, q.y * 0.4 + uTime * sp * 0.45) + vec2(0.7, 0.4));
+  float n3 = texture2D(uNoise, vec2(q.x * 6.0, q.y * 1.6 + uTime * sp * 0.9) + vec2(0.1, 0.9)).g;
+  float curtain = 0.5 * n1 + 0.3 * n2 + 0.2 * n3;
+  float far = 1.0 - exp(-z / mix(6000.0, 650.0, uStorm));
+  float veil = far * (0.035 + 0.32 * uStorm) * (0.35 + 1.4 * (curtain - 0.3));
+  sc = mix(sc, uVeilCol, clamp(veil, 0.0, 0.96));
+  vec3 c = sc * (1.0 - sn.a) + sn.rgb;
+  if (uDbg == 4) c = vec3(abs(texture2D(uPushDbg, vUv).xy) * 8.0, 0.0); else if (uDbg == 1) c = sn.rgb; else if (uDbg == 3) c = texture2D(uScene, vUv).rgb; else if (uDbg == 2) c = vec3(fract(z / 10.0), fract(z / 100.0), fract(z / 1000.0));
+  gl_FragColor = vec4(c, 1.0);
+}`;
+const compMat = new THREE.ShaderMaterial({ uniforms: { uDbg: { value: parseInt(Q.get('cdbg') || '0') }, uPushDbg: { value: null }, uScene: { value: null }, uSnow: { value: null }, uDepth: { value: null }, uNoise: U.uNoise, uNear: { value: camera.near }, uFar: { value: camera.far },
+  uStorm: U.uStorm, uTime: U.uTime, uAspect: { value: 1.7 }, uWindScr: { value: new THREE.Vector2() }, uVeilCol: { value: new THREE.Vector3(1, 1, 1) } },
+  vertexShader: FS_VS, fragmentShader: COMP_FS, depthTest: false, depthWrite: false });
+
+const BLOOM_DOWN = /* glsl */`
+uniform sampler2D uSrc; uniform vec2 uHp; uniform float uThresh; varying vec2 vUv;
+vec3 pre(vec3 c){ float l = max(c.r, max(c.g, c.b)); float k = max(l - uThresh, 0.0); k = k * k / (k + 0.5); return c * (k / max(l, 1e-4)); }
+void main(){
+  vec3 s = texture2D(uSrc, vUv).rgb * 4.0 + texture2D(uSrc, vUv - uHp).rgb + texture2D(uSrc, vUv + uHp).rgb
+         + texture2D(uSrc, vUv + vec2(uHp.x, -uHp.y)).rgb + texture2D(uSrc, vUv - vec2(uHp.x, -uHp.y)).rgb;
+  s /= 8.0;
+  if (uThresh > 0.0) s = pre(s);
+  gl_FragColor = vec4(s, 1.0);
+}`;
+const BLOOM_UP = /* glsl */`
+uniform sampler2D uSrc; uniform vec2 uHp; uniform float uW; varying vec2 vUv;
+void main(){
+  vec3 s = texture2D(uSrc, vUv + vec2(-uHp.x * 2.0, 0.0)).rgb + texture2D(uSrc, vUv + vec2(uHp.x * 2.0, 0.0)).rgb
+         + texture2D(uSrc, vUv + vec2(0.0, -uHp.y * 2.0)).rgb + texture2D(uSrc, vUv + vec2(0.0, uHp.y * 2.0)).rgb
+         + (texture2D(uSrc, vUv + vec2(-uHp.x, uHp.y)).rgb + texture2D(uSrc, vUv + vec2(uHp.x, uHp.y)).rgb
+         + texture2D(uSrc, vUv + vec2(-uHp.x, -uHp.y)).rgb + texture2D(uSrc, vUv + vec2(uHp.x, -uHp.y)).rgb) * 2.0;
+  gl_FragColor = vec4(s / 12.0 * uW, 1.0);
+}`;
+const downMat = new THREE.ShaderMaterial({ uniforms: { uSrc: { value: null }, uHp: { value: new THREE.Vector2() }, uThresh: { value: 0 } }, vertexShader: FS_VS, fragmentShader: BLOOM_DOWN, depthTest: false, depthWrite: false });
+const upMat = new THREE.ShaderMaterial({ uniforms: { uSrc: { value: null }, uHp: { value: new THREE.Vector2() }, uW: { value: 1 } }, vertexShader: FS_VS, fragmentShader: BLOOM_UP, depthTest: false, depthWrite: false,
+  blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor, blendEquation: THREE.AddEquation });
+
+const FINAL_FS = /* glsl */`
+uniform sampler2D uComp, uBloom; uniform float uExposure, uBloomStr, uTime, uStorm; uniform vec2 uRes;
+varying vec2 vUv;
+const mat3 ACESIn = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383, 0.04823, 0.01566, 0.83777);
+const mat3 ACESOut = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276, -0.07367, -0.00605, 1.07602);
+vec3 rrtOdt(vec3 v){ vec3 a = v * (v + 0.0245786) - 0.000090537; vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081; return a / b; }
+vec3 aces(vec3 c){ return clamp(ACESOut * rrtOdt(ACESIn * c), 0.0, 1.0); }
+float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+vec3 toSRGB(vec3 c){ return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c)); }
+void main(){
+  vec3 c = texture2D(uComp, vUv).rgb + texture2D(uBloom, vUv).rgb * uBloomStr;
+  c *= uExposure;
+  c = aces(c);
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  c = mix(vec3(l), c, 1.10 - 0.25 * uStorm);
+  c += vec3(-0.010, 0.002, 0.016) * (1.0 - l) * (1.0 - l);            // cool, fresh shadows
+  vec2 d = vUv - 0.5; d.x *= uRes.x / uRes.y;
+  c *= 1.0 - 0.32 * smoothstep(0.35, 1.05, length(d));                // gentle vignette
+  c = toSRGB(clamp(c, 0.0, 1.0));
+  c += (h12(gl_FragCoord.xy + fract(uTime * 7.13) * 431.0) - 0.5) * 0.016;   // fine film grain
+  gl_FragColor = vec4(c, 1.0);
+}`;
+const finalMat = new THREE.ShaderMaterial({ uniforms: { uComp: { value: null }, uBloom: { value: null }, uExposure: { value: 1.0 }, uBloomStr: { value: Q.get('nobloom') ? 0 : 0.12 }, uTime: U.uTime, uStorm: U.uStorm, uRes: { value: new THREE.Vector2() } },
+  vertexShader: FS_VS, fragmentShader: FINAL_FS, depthTest: false, depthWrite: false });
+
+let W = 1, H = 1;
+function allocTargets() {
+  const pr = quality.pr;
+  renderer.setPixelRatio(pr);
+  renderer.setSize(innerWidth, innerHeight, false);
+  W = Math.max(2, Math.floor(innerWidth * pr)); H = Math.max(2, Math.floor(innerHeight * pr));
+  [sceneRT, snowRT, compRT, ...bloomRTs].forEach(t => t && t.dispose());
+  sceneRT = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, format: THREE.RGBAFormat, depthBuffer: true, samples: quality.msaa, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+  sceneRT.depthTexture = new THREE.DepthTexture(W, H, THREE.UnsignedIntType);
+  sceneRT.depthTexture.minFilter = sceneRT.depthTexture.magFilter = THREE.NearestFilter;
+  snowRT = new THREE.WebGLRenderTarget(W, H, rtOpts);
+  compRT = new THREE.WebGLRenderTarget(W, H, rtOpts);
+  bloomRTs = [];
+  let bw = W >> 1, bh = H >> 1;
+  for (let i = 0; i < 6 && bw > 4 && bh > 4; i++) { bloomRTs.push(new THREE.WebGLRenderTarget(bw, bh, rtOpts)); bw >>= 1; bh >>= 1; }
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  snowCam.aspect = camera.aspect; snowCam.updateProjectionMatrix();
+  snowLayers.forEach(({ mat }) => { mat.uniforms.uRes.value.set(W, H); mat.uniforms.uDepth.value = sceneRT.depthTexture; });
+  compMat.uniforms.uAspect.value = camera.aspect; pushMat.uniforms.uAspect.value = camera.aspect;
+  finalMat.uniforms.uRes.value.set(W, H);
+  layoutSnowBoxes();
+}
+allocTargets();
+addEventListener('resize', allocTargets);
+
+// ---------------------------------------------------------------- simulation state: storms, coverage, wind
+const stormEvents = [];
+{ const r = mulberry32(SEED * 977 + 3); let t = 60 + 30 * r();
+  while (t < 48 * 3600) { const dur = 30 + 30 * r(); stormEvents.push({ start: t, dur, up: 8 + 2 * r(), down: 8 + 2 * r() }); t += dur + 120 + 120 * r(); } }
+const ease = x => x * x * (3 - 2 * x);
+function eventLevel(e, t) { if (!e || t < e.start || t > e.start + e.dur) return 0; return ease(clamp(Math.min((t - e.start) / e.up, (e.start + e.dur - t) / e.down), 0, 1)); }
+function scheduledStorm(t) { for (const e of stormEvents) { if (t < e.start) break; if (t <= e.start + e.dur) return eventLevel(e, t); } return 0; }
+const sim = {
+  t: T_START, storm: 0, coverage: 0, amount: 1, auto: STORM_Q !== '0', manual: null, override: null,
+  frozenCover: COVER_Q !== null && STORM_Q === '0', fps: 60,
+};
+if (STORM_Q === '1') sim.manual = { start: T_START - 20, dur: 1e9, up: 0.001, down: 9 };   // test hook: full blizzard, held
+function stormTarget(t) {
+  if (sim.override !== null) return sim.override;
+  return Math.max(eventLevel(sim.manual, t), sim.auto ? scheduledStorm(t) : 0);
+}
+const covRate = (storm, amt) => (1 / 300) * (1 + 4 * storm) * (0.45 + 0.55 * amt);
+if (COVER_Q !== null) sim.coverage = COVER_Q;
+else { let c = 0; for (let t = 0; t < T_START; t += 0.25) c = Math.min(1, c + covRate(stormTarget(t), 1) * 0.25); sim.coverage = c; }
+sim.storm = stormTarget(sim.t);
+
+const V3 = () => new THREE.Vector3();
+const wind = { base: V3(), cur: V3(), fast: V3(), slow: V3(), dispF: V3(), dispS: V3(), gust: V3(), target: V3() };
+if (WIND_Q.length === 2 && WIND_Q.every(Number.isFinite)) wind.base.set(WIND_Q[0], 0, WIND_Q[1]); else wind.base.set(0.55, 0, -0.15);
+wind.cur.copy(wind.base); wind.fast.copy(wind.base); wind.slow.copy(wind.base);
+const mouse = { x: 0.5, y: 0.5, px: -1, py: -1, has: false, vx: 0, vy: 0, svx: 0, lastT: 0, moved: false };
+const RIGHT_H = new THREE.Vector3(AX_R.x, 0, AX_R.z).normalize(), FWD_H = new THREE.Vector3(-AX_B.x, 0, -AX_B.z).normalize();
+const uiEl = document.getElementById('ui');
+addEventListener('pointermove', e => {
+  if (uiEl.contains(e.target)) return;
+  const now = performance.now() / 1000;
+  const x = e.clientX / innerWidth, y = 1 - e.clientY / innerHeight;
+  if (mouse.has) { const dt = Math.max(now - mouse.lastT, 1 / 240); mouse.vx = lerp(mouse.vx, (x - mouse.x) / dt, 0.5); mouse.vy = lerp(mouse.vy, (y - mouse.y) / dt, 0.5); }
+  mouse.x = x; mouse.y = y; mouse.lastT = now; mouse.has = true; mouse.moved = true;
+});
+addEventListener('pointerleave', () => { mouse.vx = mouse.vy = 0; });
+
+function noise1(t) { return vn(t, 7.77); }
+const _v1 = new THREE.Vector3();   // scratch (no per-frame allocation)
+function updateWind(dt) {
+  const t = sim.t;
+  // mouse: x position -> steady bias along screen right; horizontal velocity -> gust
+  const bias = mouse.has ? (mouse.x - 0.5) * 2 * 2.6 : 0;
+  mouse.svx = lerp(mouse.svx, mouse.vx, 1 - Math.exp(-dt / 0.12));
+  mouse.vx *= Math.exp(-dt / 0.08); mouse.vy *= Math.exp(-dt / 0.08);
+  const gustT = clamp(mouse.svx * 9.0, -14, 14);
+  wind.gust.lerp(_v1.copy(RIGHT_H).multiplyScalar(gustT), 1 - Math.exp(-dt / 0.25));
+  // calm breeze wanders a little
+  const breeze = 0.3 * noise1(t * 0.11);
+  wind.target.copy(wind.base).addScaledVector(RIGHT_H, bias + breeze).addScaledVector(FWD_H, 0.15 * noise1(t * 0.07 + 5.0)).add(wind.gust);
+  // storm: strong gusty wind (8..15 m/s) from the right, slowly veering
+  const s = sim.storm;
+  if (s > 0) {
+    const ang = Math.PI + 0.35 * noise1(t * 0.03 + 4.0) - 0.25;           // mostly blowing toward -right (screen left)
+    const mag = 8 + 7 * (0.5 + 0.5 * noise1(t * 0.32 + 1.3)) + 2.5 * noise1(t * 1.7 + 9.1);
+    const dir = _v1.copy(RIGHT_H).multiplyScalar(Math.cos(ang)).addScaledVector(FWD_H, Math.sin(ang));
+    wind.target.addScaledVector(dir, mag * s);
+    wind.target.y += -0.6 * s + 0.9 * s * noise1(t * 0.9 + 3.3);
+  }
+  wind.cur.lerp(wind.target, 1 - Math.exp(-dt / 0.7));
+  wind.fast.lerp(wind.cur, 1 - Math.exp(-dt / 0.18));
+  wind.slow.lerp(wind.cur, 1 - Math.exp(-dt / 1.1));
+  wind.dispF.addScaledVector(wind.fast, dt); wind.dispS.addScaledVector(wind.slow, dt);
+}
+
+// ---------------------------------------------------------------- environment (sun/sky/fog) vs storm
+const C3 = (r, g, b) => new THREE.Vector3(r, g, b);
+const ENV = {
+  sun: [C3(1.0, 0.955, 0.88).multiplyScalar(3.3), C3(0.55, 0.58, 0.62).multiplyScalar(0.55)],
+  sky: [C3(0.26, 0.38, 0.60), C3(0.55, 0.60, 0.68).multiplyScalar(1.05)],
+  gnd: [C3(0.16, 0.19, 0.10), C3(0.40, 0.42, 0.45)],
+  zen: [C3(0.09, 0.25, 0.68).multiplyScalar(1.5), C3(0.48, 0.53, 0.60).multiplyScalar(1.2)],
+  hor: [C3(0.40, 0.58, 0.90).multiplyScalar(1.5), C3(0.66, 0.70, 0.77).multiplyScalar(1.2)],
+  ray: [C3(0.42, 0.62, 1.0).multiplyScalar(1.45), C3(0.70, 0.74, 0.80).multiplyScalar(1.3)],
+  haze: [C3(0.68, 0.77, 0.90).multiplyScalar(1.3), C3(0.74, 0.78, 0.85).multiplyScalar(1.18)],
+  veil: [C3(0.85, 0.89, 0.95).multiplyScalar(1.4), C3(0.80, 0.84, 0.90).multiplyScalar(1.22)],
+};
+const tmp = V3();
+function mixEnv(key, s, out) { return out.copy(ENV[key][0]).lerp(ENV[key][1], s); }
+function updateEnv() {
+  const s = sim.storm, s2 = ease(clamp(s * 1.15, 0, 1));
+  mixEnv('sun', s2, U.uSunColor.value); mixEnv('sky', s2, U.uSkyAmb.value); mixEnv('gnd', s2, U.uGroundAmb.value);
+  mixEnv('zen', s2, U.uZenith.value); mixEnv('hor', s2, U.uHorizon.value); mixEnv('ray', s2, U.uRayCol.value); mixEnv('haze', s2, U.uHazeCol.value);
+  U.uRayleigh.value.set(5.8e-6, 13.5e-6, 33.1e-6).multiplyScalar(lerp(1.9, 6, s2));
+  U.uHazeDen.value = lerp(4.0e-5, 7.0e-4, s2 * s2);
+  U.uHazeScale.value = lerp(420, 3000, s2);
+  U.uCloudCov.value = lerp(0.22, 1.0, s2);
+  U.uCloudDark.value = s2;
+  U.uStorm.value = s; U.uCoverage.value = sim.coverage;
+  U.uWind.value.copy(wind.cur);
+}
+
+// ---------------------------------------------------------------- UI
+const $ = id => document.getElementById(id);
+const amtEl = $('amt'), amtV = $('amtv');
+function amtLabel(v) { return v < 0.5 ? '적게' : v < 1.3 ? '보통' : v < 1.9 ? '많이' : '아주 많이'; }
+function syncAmt() { sim.amount = parseFloat(amtEl.value); amtV.textContent = amtLabel(sim.amount); amtEl.style.setProperty('--p', ((sim.amount - 0.2) / 2.3 * 100).toFixed(1) + '%'); }
+amtEl.addEventListener('input', syncAmt); syncAmt();
+$('bstorm').addEventListener('click', () => { sim.override = null; sim.manual = { start: sim.t, dur: 52, up: 8.5, down: 9.5 }; });
+$('auto').checked = sim.auto;
+$('auto').addEventListener('change', e => { sim.auto = e.target.checked; });
+$('breset').addEventListener('click', () => { sim.coverage = 0; });
+const wArrow = $('warrow'), wVal = $('wval');
+
+// ---------------------------------------------------------------- frame loop
+const invVP = new THREE.Matrix4();
+let last = performance.now(), frames = 0, fpsT = 0, slowT = 0;
+let fadeEl = $('fade');
+let hintEl = SHOW_UI ? $('hint') : null; const startWall = performance.now();
+function frame() {
+  requestAnimationFrame(frame);
+  const now = performance.now();   // (rAF timestamps are not wall-clock in some headless/throttled modes)
+  const rawDt = (now - last) / 1000; last = now;
+  const dt = clamp(rawDt, 0.0005, 0.05);
+  sim.t += dt;
+  // fps + adaptive quality (only downgrades; rAF is vsync-capped so we cannot see headroom)
+  if (rawDt < 0.25) { frames++; fpsT += rawDt; }   // ignore tab-switch gaps
+  if (fpsT > 0.5) { sim.fps = frames / fpsT; frames = 0; fpsT = 0;
+    if (sim.fps < 42 && sim.t - T_START > 6) { slowT += 0.5; if (slowT > 4) { slowT = 0; degrade(); } } else slowT = Math.max(0, slowT - 0.5); }
+
+  // storm & accumulation
+  const st = stormTarget(sim.t);
+  sim.storm = lerp(sim.storm, st, 1 - Math.exp(-dt / 0.6));   // schedule ramps are already smooth; this only softens manual switches
+  if (!sim.frozenCover) sim.coverage = Math.min(1, sim.coverage + covRate(sim.storm, sim.amount) * dt);
+  updateWind(dt);
+  updateEnv();
+  U.uTime.value = sim.t;
+  U.uCloudOff.value.x -= (wind.slow.x * 4 + 6) * dt; U.uCloudOff.value.y -= (wind.slow.z * 4 + 1.5) * dt;
+
+  // camera: very slow subtle drift, composition stays put
+  const tt = sim.t;
+  camera.rotation.set(BASE_PITCH + 0.0016 * Math.sin(tt * 0.031 + 1.0), BASE_YAW + 0.0045 * Math.sin(tt * 0.019), 0);
+  camera.position.set(0.8 * Math.sin(tt * 0.023), CAM_Y + 0.25 * Math.sin(tt * 0.029), 0);
+  camera.updateMatrixWorld();
+  snowCam.position.copy(camera.position); snowCam.quaternion.copy(camera.quaternion); snowCam.updateMatrixWorld();
+  invVP.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse).invert();
+  skyMat.uniforms.uInvVP.value.copy(invVP);
+
+  // push field (mouse local push / swirl)
+  const tv = Math.tan(camera.fov * Math.PI / 360);
+  {
+    const pm = pushMat.uniforms;
+    const prev = pushRT[pushIdx], next = pushRT[1 - pushIdx];
+    pm.uPrev.value = prev.texture; pm.uDt.value = dt;
+    if (pm.uM1.value.x < 0) pm.uM0.value.set(mouse.x, mouse.y); else pm.uM0.value.copy(pm.uM1.value);
+    pm.uM1.value.set(mouse.x, mouse.y);
+    pm.uActive.value = mouse.moved ? 1 : 0; mouse.moved = false;
+    pm.uMVel.value.set(mouse.vx, mouse.vy).clampLength(0, 6);
+    const dRef = 6.0;
+    const wr = wind.slow.dot(AX_R), wu = wind.slow.dot(AX_U) - 0.9;
+    pm.uAdv.value.set(wr / dRef / (2 * tv * camera.aspect), wu / dRef / (2 * tv));
+    pass(pushMat, next);
+    pushIdx = 1 - pushIdx; compMat.uniforms.uPushDbg.value = next.texture;
+    snowLayers.forEach(({ mat }) => { mat.uniforms.uPush.value = next.texture; mat.uniforms.uPushPrev.value = prev.texture; mat.uniforms.uPushDt.value = dt; });
+  }
+
+  // snow layer uniforms
+  const calm = clamp(sim.amount / 6, 0.02, 1);
+  // blizzard: x6 density (near layers less, so the frame is not just smeared)
+  const fogCol = U.uHazeCol.value;
+  snowLayers.forEach(({ L, mat, geo }) => {
+    const u = mat.uniforms;
+    u.uDensity.value = clamp(calm * (1 + ((L.stormMul || 6) - 1) * sim.storm), 0, 1) * quality.snowScale;
+    u.uFadeN.value = 1 / 0.04;
+    geo.instanceCount = Math.min(L.count, Math.ceil((u.uDensity.value + 0.04) * L.count));
+    u.uBoxCenter.value.copy(camera.position).addScaledVector(AX_B, -(Math.max(0.05, L.near - L.fin * 1.5) + L.far + L.fout * 1.5) * 0.5);
+    u.uDispF.value.copy(wind.dispF); u.uDispS.value.copy(wind.dispS);
+    u.uWindF.value.copy(wind.fast); u.uWindS.value.copy(wind.slow);
+    u.uTurbAmp.value = 0.6 + 0.12 * wind.cur.length() + 0.8 * sim.storm;
+    u.uShutter.value = 1 / 90;
+    u.uFlakeFog.value = lerp(0.0008, 0.014, sim.storm);
+    u.uFogCol.value.copy(fogCol);
+  });
+  compMat.uniforms.uWindScr.value.set(wind.cur.dot(AX_R), wind.cur.dot(AX_U));
+  mixEnv('veil', ease(sim.storm), compMat.uniforms.uVeilCol.value);
+
+  // ---- render
+  renderer.setRenderTarget(sceneRT); renderer.setClearColor(0x000000, 1); renderer.clear(true, true, false);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(snowRT); renderer.setClearColor(0x000000, 0); renderer.clear(true, false, false);
+  if (!NOSNOW) renderer.render(snowScene, snowCam);
+  const cu = compMat.uniforms; cu.uScene.value = sceneRT.texture; cu.uSnow.value = snowRT.texture; cu.uDepth.value = sceneRT.depthTexture;
+  pass(compMat, compRT);
+  // bloom: threshold + dual-filter down/up chain
+  let src = compRT;
+  bloomRTs.forEach((rt, i) => { downMat.uniforms.uSrc.value = src.texture; downMat.uniforms.uHp.value.set(0.5 / src.width, 0.5 / src.height); downMat.uniforms.uThresh.value = i === 0 ? 2.2 : 0; pass(downMat, rt); src = rt; });
+  for (let i = bloomRTs.length - 2; i >= 0; i--) { const s = bloomRTs[i + 1]; upMat.uniforms.uSrc.value = s.texture; upMat.uniforms.uHp.value.set(0.5 / s.width, 0.5 / s.height); upMat.uniforms.uW.value = 0.9; pass(upMat, bloomRTs[i]); }
+  finalMat.uniforms.uComp.value = compRT.texture; finalMat.uniforms.uBloom.value = bloomRTs[0].texture;
+  finalMat.uniforms.uExposure.value = lerp(1.0, 0.74, smooth(0.25, 1.0, sim.coverage)) * lerp(1.0, 0.95, sim.storm);   // expose for snow
+  pass(finalMat, null);
+
+  // hint: driven from the frame loop (deterministic in captures); fades in, holds, fades out
+  if (hintEl) { const ht = (now - startWall) / 1000; const o = smooth(0.5, 1.6, ht) * (1 - smooth(6.0, 8.5, ht));
+    const os = o.toFixed(2); if (hintEl.dataset.o !== os) { hintEl.dataset.o = os; hintEl.style.opacity = os; } if (ht > 9) { hintEl.remove(); hintEl = null; } }
+  // UI readout
+  const wx = wind.cur.dot(RIGHT_H), wz = wind.cur.dot(FWD_H), wm = Math.hypot(wx, wz);
+  wArrow.style.transform = `rotate(${Math.atan2(wx, wz) * 180 / Math.PI}deg)`;
+  wVal.textContent = wm.toFixed(1);
+  if (fadeEl && fadeEl.style.opacity !== '0') { fadeEl.style.opacity = '0'; const f = fadeEl; setTimeout(() => f.remove(), 1800); fadeEl = null; }
+}
+quality.snowScale = 1;
+function degrade() {
+  if (quality.msaa > 0) { quality.msaa = 0; allocTargets(); console.log('quality: msaa off'); return; }
+  if (quality.pr > 0.8) { quality.pr = Math.max(0.75, quality.pr - 0.2); allocTargets(); console.log('quality: pr', quality.pr); return; }
+  if (quality.snowScale > 0.5) { quality.snowScale -= 0.15; console.log('quality: snow', quality.snowScale); }
+}
+
+// ---------------------------------------------------------------- public API (test hooks)
+window.snowSim = {
+  state: () => ({ coverage: +sim.coverage.toFixed(4), storm: +sim.storm.toFixed(4), windX: +wind.cur.x.toFixed(3), windZ: +wind.cur.z.toFixed(3),
+    flakeCount: snowLayers.reduce((a, l) => a + l.geo.instanceCount, 0), fps: +sim.fps.toFixed(1) }),
+  setCoverage: v => { sim.coverage = clamp(+v || 0, 0, 1); },
+  setStorm: v => { sim.override = (v === null || v === undefined) ? null : clamp(+v, 0, 1); if (sim.override !== null) sim.storm = sim.override; else sim.manual = null; },
+  reset: () => { sim.coverage = 0; },
+  schedule: () => stormEvents.slice(0, 6).map(e => ({ start: +e.start.toFixed(1), dur: +e.dur.toFixed(1) })),
+};
+window.__timing.ready = Math.round(performance.now());
+window.__dbg = { pushRT, renderer, mouse, pushMat, sim, quality, get idx() { return pushIdx; } };
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
