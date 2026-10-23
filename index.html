@@ -2,25 +2,28 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>눈 내리는 들판</title>
 <style>
   :root { --line: rgba(255,255,255,0.22); --ink: rgba(255,255,255,0.96); --ink2: rgba(255,255,255,0.80); }
   /* body colour = the composite's fade base (0.80, 0.85, 0.90), so the pre-script page, the first GL frame and the reveal all start from one colour */
   html, body { margin: 0; height: 100%; overflow: hidden; background: rgb(204,217,230); user-select: none; -webkit-user-select: none;
                font: 500 12.5px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif; }
-  canvas { display: block; position: fixed; inset: 0; width: 100vw; height: 100vh; }
+  /* the canvas fills the current layout viewport (100% of the fixed containing block, not 100vh: on phones vh is the
+     largest viewport and can disagree with the visible one); its pixel size is read back from its box in allocate() */
+  canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+  html, body { overscroll-behavior: none; -webkit-touch-callout: none; }
   /* The only chrome: a soft snowflake glyph in the corner. A dark halo keeps it readable over snow (it is a white
      flake among white flakes); it dims once the pointer rests (never below 0.25), brightens on hover / open, and
      lifts once for two seconds when the hint fades so a first-time viewer notices the corner. */
-  #icon { position: fixed; right: 22px; bottom: 20px; width: 28px; height: 28px; padding: 8px; margin: -8px; cursor: pointer;
+  #icon { position: fixed; right: calc(22px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); width: 28px; height: 28px; padding: 8px; margin: -8px; cursor: pointer;
           opacity: 0.5; transition: opacity 0.9s ease; -webkit-tap-highlight-color: transparent; outline: none; }
   #icon svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 0 2.5px rgba(0,25,50,0.75)) drop-shadow(0 1px 2px rgba(0,20,40,0.5)); }
   #icon.idle { opacity: 0.25; }
   #icon.lift { opacity: 0.9; transition-duration: 0.6s; }
   #icon:hover, #icon.open, #icon:focus-visible { opacity: 0.85; transition-duration: 0.25s; }
   /* glass pop-over anchored above the icon: a cool dark frosted glass, so white ink keeps >= 4.5:1 over snow */
-  #pop { position: fixed; right: 22px; bottom: 62px; width: 240px; box-sizing: border-box; padding: 14px 16px 13px; border-radius: 16px;
+  #pop { position: fixed; right: calc(22px + env(safe-area-inset-right)); bottom: calc(62px + env(safe-area-inset-bottom)); width: 240px; max-width: calc(100% - 44px); box-sizing: border-box; padding: 14px 16px 13px; border-radius: 16px;
          background: linear-gradient(160deg, rgba(16,32,58,0.76), rgba(16,32,58,0.68));
          border: 1px solid var(--line); box-shadow: 0 10px 32px rgba(20,40,70,0.28), inset 0 1px 0 rgba(255,255,255,0.14);
          -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
@@ -51,7 +54,7 @@
   .toggle input { position: absolute; width: 1px; height: 1px; margin: -1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); pointer-events: none; }   /* visually hidden, still keyboard-reachable */
   .toggle input:checked + .sw { background: rgba(140,200,255,0.65); }
   .toggle input:checked + .sw::after { transform: translateX(13px); }
-  #hint { position: fixed; left: 50%; bottom: 9vh; transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
+  #hint { position: fixed; left: 50%; bottom: calc(9vh + env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
           background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.25);
           -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
           color: rgba(255,255,255,0.95); font-size: 14px; line-height: 1.2; letter-spacing: 0; text-shadow: 0 1px 3px rgba(0,20,40,0.4);
@@ -134,10 +137,24 @@ function getExtensions() {
 // ------------------------------------------------------------------ camera & sun
 // high vantage over the meadow: ~230 m above the chalet basin, tilted 12 deg down (horizon sits at ~24% from the top)
 const CAM = { pos: [0, 132, 0], yaw: 0.0, pitch: -12 * Math.PI / 180, fovY: 44 * Math.PI / 180 };
-const camF = [Math.sin(CAM.yaw) * Math.cos(CAM.pitch), Math.sin(CAM.pitch), Math.cos(CAM.yaw) * Math.cos(CAM.pitch)];
-const camR = (() => { const r = [camF[2], 0, -camF[0]]; const l = Math.hypot(r[0], r[2]); return [r[0] / l, 0, r[2] / l]; })();
-const camU = [camF[1] * camR[2] - camF[2] * camR[1], camF[2] * camR[0] - camF[0] * camR[2], camF[0] * camR[1] - camF[1] * camR[0]];  // F x R = up
-const TANH = Math.tan(CAM.fovY / 2);
+const camF = [0, 0, 1], camR = [1, 0, 0], camU = [0, 1, 0];   // filled by frameCamera; mutated in place (other code holds them)
+let TANH = Math.tan(CAM.fovY / 2);
+// Framing per aspect ratio. Landscape (w/h >= 1.25) is the composed 44 deg view. Toward portrait (phones) the vertical
+// fov widens so the horizontal fov never drops below 34 deg, the camera tilts down 4 deg (more meadow under a taller
+// frame) and turns 9 deg left so the snowy peak and the hazy valley stay in frame beside the wall.
+// Returns true when the camera moved (the baked G-buffer is then stale).
+function frameCamera(asp) {
+  const t = smooth(1.25, 0.6, asp), d = Math.PI / 180;
+  const tanV = Math.tan(22 * d) + t * Math.max(0, Math.tan(17 * d) / asp - Math.tan(22 * d));
+  const yaw = -9 * d * t, pitch = (-12 - 4 * t) * d;
+  const changed = Math.abs(tanV - TANH) > 1e-6 || Math.abs(yaw - CAM.yaw) > 1e-6 || Math.abs(pitch - CAM.pitch) > 1e-6;
+  CAM.yaw = yaw; CAM.pitch = pitch; CAM.fovY = 2 * Math.atan(tanV); TANH = tanV;
+  camF[0] = Math.sin(yaw) * Math.cos(pitch); camF[1] = Math.sin(pitch); camF[2] = Math.cos(yaw) * Math.cos(pitch);
+  const l = Math.hypot(camF[2], camF[0]); camR[0] = camF[2] / l; camR[1] = 0; camR[2] = -camF[0] / l;
+  camU[0] = camF[1] * camR[2] - camF[2] * camR[1]; camU[1] = camF[2] * camR[0] - camF[0] * camR[2]; camU[2] = camF[0] * camR[1] - camF[1] * camR[0];  // F x R = up
+  return changed;
+}
+frameCamera(16 / 9);
 const SUN = (() => { const s = [-0.70, 0.47, -0.17]; const l = Math.hypot(...s); return s.map(v => v / l); })();
 
 // =====================================================================================
@@ -1716,15 +1733,28 @@ function resetPerf() {   // the GPU budget changed (new canvas size / restored c
   perf.level = 0; perf.rs = 1; perf.skySteps = 36; perf.flakeMul = 1;
   perf.n = 0; perf.cool = 0; perf.good = 0; perf.skip = 2;
 }
-function allocate() {
+// CSS size of the canvas box: what is actually on screen (innerWidth/innerHeight can lag or disagree on phones while
+// the keyboard or the browser toolbars change the visible area)
+function cssSize() {
+  const w = canvas.clientWidth || innerWidth, h = canvas.clientHeight || innerHeight;
+  return [Math.max(1, w), Math.max(1, h)];
+}
+function targetSize() {
+  const [cw, ch] = cssSize();
   let dpr = Math.min(window.devicePixelRatio || 1, 1.25);
-  const px = innerWidth * innerHeight * dpr * dpr;
+  const px = cw * ch * dpr * dpr;
   if (px > GB_MAX_PX) dpr *= Math.sqrt(GB_MAX_PX / px);
-  const W = Math.max(64, Math.round(innerWidth * dpr)), H = Math.max(64, Math.round(innerHeight * dpr));
+  return [Math.max(64, Math.round(cw * dpr)), Math.max(64, Math.round(ch * dpr))];
+}
+function allocate() {
+  const [W, H] = targetSize();
   if (W === R.W && H === R.H) return;
   R.W = W; R.H = H; canvas.width = W; canvas.height = H;
   freeRT(R.gbNext);
-  if (R.gbCur && W * H > GB_SINGLE_PX) { freeRT(R.gbCur); R.gbCur = null; }
+  // a new aspect may re-frame the camera (portrait vs landscape): the old buffer then holds other rays, so the new
+  // one is revealed like a first load instead of being blended with it
+  const moved = frameCamera(W / H);
+  if (R.gbCur && (moved || W * H > GB_SINGLE_PX)) { freeRT(R.gbCur); R.gbCur = null; }
   R.gbAsp = R.gbCur ? (W / H) / (R.gbCur.w / R.gbCur.h) : 1;
   R.gbNext = rt(W, H, 3, gl.NEAREST); R.gbRow = 0; R.gbRows = Math.max(1, Math.round(H / 120)); R.gbMiss = false; R.gbDone = -1;
   buildStart = performance.now();
@@ -1757,8 +1787,11 @@ function allocScaled() {
   for (let i = 0; i < 6 && bw >= 8 && bh >= 8; i++) { R.bloom.push(rt(bw, bh, 1, gl.LINEAR)); bw = Math.ceil(bw / 2); bh = Math.ceil(bh / 2); }
 }
 let resizeTimer = 0;
-function scheduleAllocate() { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (!ctxLost) allocate(); }, 150); }
+function scheduleAllocate() { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { resizeTimer = 0; if (!ctxLost) allocate(); }, 150); }
 addEventListener('resize', scheduleAllocate);
+addEventListener('orientationchange', scheduleAllocate);
+if (window.visualViewport) visualViewport.addEventListener('resize', scheduleAllocate);
+if (window.ResizeObserver) new ResizeObserver(scheduleAllocate).observe(canvas);
 // a window dragged to a display with another pixel density fires no resize: watch the dppx media query instead
 let dprMQ = null;
 function armDprWatch() {
@@ -1897,7 +1930,7 @@ addEventListener('pointermove', e => {
   const now = performance.now() / 1000;
   mouse.lastMove = sim.wall;
   if (e.target && e.target.closest && e.target.closest('#icon, #pop')) { mouse.lx = null; return; }   // the chrome never makes wind
-  const W = innerWidth, H = innerHeight;
+  const [W, H] = cssSize();
   mouse.inside = true;
   mouse.x = e.clientX / W * 2 - 1; mouse.y = 1 - e.clientY / H * 2;
   if (mouse.lx !== null) {
@@ -1916,6 +1949,10 @@ addEventListener('pointermove', e => {
   mouse.lx = e.clientX; mouse.ly = e.clientY; mouse.lt = now;
 }, { passive: true });
 addEventListener('mouseout', e => { if (!e.relatedTarget) { mouse.inside = false; mouse.lx = null; } });
+// touch: pointermove only fires while a finger is down, so a lifted finger must end the wind (else the last position
+// would keep its steady bias)
+const touchEnd = e => { if (e.pointerType !== 'mouse') { mouse.inside = false; mouse.lx = null; } };
+addEventListener('pointerup', touchEnd); addEventListener('pointercancel', touchEnd);
 addEventListener('blur', () => { mouse.inside = false; mouse.lx = null; });
 function pruneSegs() {   // drop wake segments older than their envelope, in place
   let k = 0;
@@ -1937,12 +1974,15 @@ function triggerBlizzard(dur = 100) {
 const ui = {
   icon: null, pop: null, hint: null, amount: null, amountV: null, auto: null, open: false, hover: false, last: 0, busy: 0,
   touch() { ui.last = sim.wall; },
-  show() { ui.open = true; ui.pop.classList.add('open'); ui.icon.classList.add('open'); ui.icon.setAttribute('aria-expanded', 'true'); ui.touch(); },
+  show() { ui.hintDone = true; if (ui.hint) ui.hint.classList.remove('on');   // the hint never sits under the open glass
+          ui.open = true; ui.pop.classList.add('open'); ui.icon.classList.add('open'); ui.icon.setAttribute('aria-expanded', 'true'); ui.touch(); },
   close() { ui.open = false; ui.pop.classList.remove('open'); ui.icon.classList.remove('open'); ui.icon.setAttribute('aria-expanded', 'false'); },
 };
 if (SHOW_UI) {
   const $ = id => document.getElementById(id);
-  ui.icon = $('icon'); ui.pop = $('pop'); ui.hint = $('hint'); ui.amount = $('amount'); ui.amountV = $('amountv'); ui.auto = $('auto');
+  ui.icon = $('icon'); ui.pop = $('pop'); ui.hint = $('hint');
+  // touch screens: there is no hover, the wind comes from a finger sweeping across the scene
+  if (ui.hint && matchMedia('(hover: none) and (pointer: coarse)').matches) ui.hint.textContent = '화면을 쓸어 바람을 일으켜 보세요'; ui.amount = $('amount'); ui.amountV = $('amountv'); ui.auto = $('auto');
   const toggle = () => { if (ui.open) ui.close(); else ui.show(); };
   ui.icon.addEventListener('click', toggle);
   ui.icon.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
@@ -1977,7 +2017,7 @@ function updateUI() {
   if (readyTime >= 0) {
     const since = sim.wall - readyTime;
     if (ui.hint) {
-      if (since > 0.5 && since < 5.5) ui.hint.classList.add('on');
+      if (since > 0.5 && since < 5.5 && !ui.hintDone) ui.hint.classList.add('on');
       else if (since >= 5.5) { ui.hint.classList.remove('on'); if (since > 7.2) { ui.hint.remove(); ui.hint = null; } }
     }
     ui.icon.classList.toggle('lift', since >= 5.5 && since < 7.5);
@@ -2083,7 +2123,7 @@ function update(dt) {
   mouse.vx *= Math.exp(-dt / 0.09);
   const biasT = mouse.inside ? mouse.x * 3.0 : 0;
   sim.bias += (biasT - sim.bias) * (1 - Math.exp(-dt / 0.8));
-  const gustT = clamp(mouse.vx / innerWidth * 10.0, -14, 14);
+  const gustT = clamp(mouse.vx / cssSize()[0] * 10.0, -14, 14);
   const k = Math.abs(gustT) > Math.abs(sim.gust) ? 1 - Math.exp(-dt / 0.12) : 1 - Math.exp(-dt / 1.1);
   sim.gust += (gustT - sim.gust) * k;
   windTarget(t, sim.bias + sim.gust);
@@ -2337,6 +2377,8 @@ function frame() {
     if (!FIXED && readyTime >= 0 && sim.wall - readyTime > 3 && !R.gbNext) controller(dt);
   }
   updateUI();
+  // (only when no resize is already pending, so this check can never keep pushing a pending one back)
+  if (frameNo % 30 === 0 && !ctxLost && !resizeTimer) { const [W, H] = targetSize(); if (W !== R.W || H !== R.H) scheduleAllocate(); }
   frameNo++;
 }
 fastForward();
