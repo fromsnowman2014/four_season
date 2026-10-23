@@ -1,0 +1,158 @@
+/* Chrome of the snow simulation (stage-1 owner: lane B): one icon, a glass pop-over, a hint, the error card. */
+:root { --ink: rgba(255,255,255,0.97); --ink2: rgba(255,255,255,0.80); --ink3: rgba(255,255,255,0.74);
+        --line: rgba(255,255,255,0.22); --hair: rgba(255,255,255,0.13); --groove: rgba(0,12,30,0.24);
+        --fill: rgba(255,255,255,0.21); --hov: rgba(255,255,255,0.08); --ease: cubic-bezier(0.3, 0.7, 0.2, 1); }
+/* body colour = the composite's fade base (0.80, 0.85, 0.90), so the pre-script page, the first GL frame and the reveal all start from one colour */
+html, body { margin: 0; height: 100%; overflow: hidden; background: rgb(204,217,230); user-select: none; -webkit-user-select: none;
+             font: 500 12.5px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+             letter-spacing: 0; word-break: keep-all; -webkit-font-smoothing: antialiased;
+             /* phones: no rubber-band / pull-to-refresh, no long-press callout, no landscape text inflation */
+             overscroll-behavior: none; -webkit-touch-callout: none; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+/* the canvas fills the current layout viewport: 100% of its fixed box, not 100vw x 100vh (on phones vh is the largest
+   viewport and can disagree with the visible one); gl.js reads its pixel size back from this box. It owns every touch
+   gesture (a drag is wind: no page pan or zoom over the scene); the hand closes only while dragging */
+canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; cursor: default; touch-action: none; }
+canvas.drag { cursor: grabbing; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* The only chrome: a soft line glyph in the corner that follows the season (blossom, sun, leaf, snowflake). A dark
+   halo keeps it readable over snow; it dims once the pointer rests (never below 0.25), brightens on hover / open,
+   and lifts once for two seconds when the hint fades so a first-time viewer notices the corner.
+   The glyph is 28 px; its padding makes a 44 px tap target. The corner clears the phone safe areas (viewport-fit=cover). */
+#icon { position: fixed; right: calc(22px + env(safe-area-inset-right)); bottom: calc(20px + env(safe-area-inset-bottom)); width: 28px; height: 28px; padding: 8px; margin: -8px; cursor: pointer;
+        opacity: 0.5; transition: opacity 0.9s ease; -webkit-tap-highlight-color: transparent; outline: none; touch-action: none; }
+#icon svg { display: block; width: 100%; height: 100%; overflow: visible;
+            filter: drop-shadow(0 0 2.5px rgba(0,25,50,0.75)) drop-shadow(0 1px 2px rgba(0,20,40,0.5)); }
+#icon .glyph { opacity: 0; transition: opacity 0.25s ease; }
+#icon .glyph.on { opacity: 1; }
+#icon.idle { opacity: 0.25; }
+#icon.lift { opacity: 0.9; transition-duration: 0.6s; }
+#icon.open, #icon:focus-visible { opacity: 0.8; transition-duration: 0.25s; }
+/* hover styles only where there is a hover (a tap on a phone would leave them stuck) */
+@media (hover: hover) { #icon:hover { opacity: 0.8; transition-duration: 0.25s; } }
+
+/* glass pop-over anchored above the icon: a cool dark frosted glass, so white ink keeps >= 4.5:1 over snow. It clears
+   the safe areas and scrolls only in a window too short for it (a landscape phone gets the compact layout below);
+   --th is the slider thumb (bigger for fingers) */
+#pop { --th: 14px; position: fixed; right: calc(22px + env(safe-area-inset-right)); bottom: calc(62px + env(safe-area-inset-bottom)); width: 272px;
+       max-width: calc(100% - 44px - env(safe-area-inset-left) - env(safe-area-inset-right));
+       max-height: calc(100% - 76px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain;
+       touch-action: pan-y; scrollbar-width: thin; box-sizing: border-box; padding: 13px 16px 15px; border-radius: 18px;
+       background: linear-gradient(160deg, rgba(16,32,58,0.76), rgba(16,32,58,0.68));
+       border: 1px solid var(--line); box-shadow: 0 12px 36px rgba(20,40,70,0.30), inset 0 1px 0 rgba(255,255,255,0.14);
+       -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+       color: var(--ink); text-shadow: 0 1px 2px rgba(0,20,40,0.35);
+       opacity: 0; transform: translateY(6px) scale(0.98); transform-origin: 100% 100%; pointer-events: none; visibility: hidden;
+       transition: opacity 0.22s ease, transform 0.22s ease, visibility 0s linear 0.22s; }
+#pop.open { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+:where(#pop button) { font: inherit; color: inherit; text-shadow: inherit; letter-spacing: 0; margin: 0; padding: 0; border: 0; background: none;
+              cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* one focus ring that belongs to the glass, instead of Chrome's black outline */
+#pop :focus { outline: none; }
+#pop :focus-visible { outline: 1.5px solid rgba(255,255,255,0.85); outline-offset: 1px; }
+#icon:focus-visible { outline: 1.5px solid rgba(255,255,255,0.85); outline-offset: -4px; border-radius: 50%; }
+
+/* 1) status: season, weather; the hairline under it doubles as the weather-transition progress */
+.status { display: flex; align-items: center; gap: 6px; height: 20px; font-size: 13.5px; white-space: nowrap; }
+#stSeason { font-weight: 600; }
+.sep { color: var(--ink3); }
+#stWx { color: var(--ink); font-variant-numeric: tabular-nums; }
+.rule { position: relative; height: 1px; margin: 12px -16px 11px; background: var(--hair); }
+#stProg { position: absolute; left: 0; top: 0; height: 1px; width: 100%; background: rgba(255,255,255,0.75); transform-origin: 0 0;
+          transform: scaleX(var(--p, 0)); opacity: 0; transition: opacity 0.25s ease, transform 0.25s linear; }
+#stProg.on { opacity: 1; }
+
+/* section captions */
+.cap, .hd { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; line-height: 15px; color: var(--ink2); margin: 0 0 6px; }
+.hd i { font-style: normal; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* 2) season: one segmented control; the glass thumb slides under the checked segment (--i set from JS) */
+.seg { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); padding: 2px; margin: 0; border-radius: 10px;
+       background: var(--groove); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.07); }
+.seg .thumb { position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc((100% - 4px) / 5); border-radius: 8px; background: var(--fill);
+              box-shadow: 0 1px 3px rgba(0,10,30,0.22), inset 0 0.5px 0 rgba(255,255,255,0.24);
+              transform: translateX(calc(var(--i, 0) * 100%)); transition: transform 0.24s var(--ease); }
+.seg button { position: relative; height: 26px; border-radius: 8px; font-size: 12.5px; color: var(--ink2); transition: color 0.2s ease; }
+@media (hover: hover) { .seg button:hover { color: var(--ink); } }
+.seg button[aria-checked="true"] { color: var(--ink); }
+
+/* the year under the four season segments (phase 0 = 1 March at the left edge of 봄): a hairline, the part of the
+   year already gone a shade brighter, a small dot for today; --y set from JS */
+.yr { position: relative; height: 5px; margin: 6px 2px 13px calc(2px + (100% - 4px) / 5); }
+.yr::before { content: ""; position: absolute; left: 0; right: 0; top: 2px; height: 1px; background: rgba(255,255,255,0.14); }
+.yr .done { position: absolute; left: 0; top: 2px; height: 1px; width: calc(var(--y, 0) * 100%); background: rgba(255,255,255,0.42); }
+.yr .dot { position: absolute; top: 0; left: calc(var(--y, 0) * 100%); width: 4px; height: 4px; margin: 0.5px 0 0 -2px; border-radius: 50%;
+           background: #fff; box-shadow: 0 0 0 1.5px rgba(16,32,58,0.5), 0 1px 2px rgba(0,20,40,0.4); }
+
+/* 3) weather: a 4 x 2 grid of line icons with a small label; the checked one is soft filled glass */
+.wx { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 3px; margin: 0 0 14px; }
+.wx button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px; border-radius: 10px; color: var(--ink2);
+             transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease; }
+@media (hover: hover) { .wx button:hover { background: var(--hov); color: var(--ink); } }
+.wx button[aria-checked="true"] { background: var(--fill); color: var(--ink); box-shadow: 0 1px 3px rgba(0,10,30,0.2), inset 0 0.5px 0 rgba(255,255,255,0.24); }
+.wx svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round;
+          filter: drop-shadow(0 1px 1.5px rgba(0,20,40,0.35)); }
+.wx span { font-size: 11px; line-height: 13px; }
+
+/* 4) / 5) sliders: two-tone track (filled part white, the rest a dark groove) so the range reads on snow and on meadow;
+   --p is set from JS. The time slider is stepped: its six stops are labelled under the track */
+.slider { display: block; margin: 0 0 12px; cursor: default; }
+.slider.last { margin-bottom: 0; }
+#pop input[type=range] { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 14px; margin: 0; background: none; cursor: pointer;
+                         -webkit-tap-highlight-color: transparent; }
+#pop input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.88) var(--p, 50%), rgba(0,12,30,0.42) var(--p, 50%)); box-shadow: inset 0 0.5px 0 rgba(255,255,255,0.12); }
+#pop input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: var(--th); height: var(--th); margin-top: calc((3px - var(--th)) / 2); border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 4px rgba(0,30,60,0.38), 0 0 0 0.5px rgba(0,20,40,0.12); cursor: pointer; transition: transform 0.15s ease; }
+#pop input[type=range]:active::-webkit-slider-thumb { transform: scale(1.1); }
+#pop input[type=range]::-moz-range-track { height: 3px; border-radius: 2px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.88) var(--p, 50%), rgba(0,12,30,0.42) var(--p, 50%)); }
+#pop input[type=range]::-moz-range-thumb { width: var(--th); height: var(--th); border: 0; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,30,60,0.38); }
+/* keyboard focus on a slider rings its thumb, not the whole track */
+#pop input[type=range]:focus-visible { outline: none; }
+#pop input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px rgba(16,32,58,0.7), 0 0 0 3.5px rgba(255,255,255,0.9); }
+#pop input[type=range]:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 2px rgba(16,32,58,0.7), 0 0 0 3.5px rgba(255,255,255,0.9); }
+/* tick labels centred on the thumb's stops: the thumb centre runs from th/2 to (width - th/2) */
+.ticks { position: relative; display: block; height: 13px; margin-top: 4px; }
+.ticks b { position: absolute; top: 0; font-weight: 500; font-size: 10px; line-height: 13px; color: var(--ink3); transform: translateX(-50%);
+           font-variant-numeric: tabular-nums; transition: color 0.2s ease; }
+.ticks b:nth-child(1) { left: calc(var(--th) / 2); } .ticks b:nth-child(2) { left: calc(var(--th) / 2 + (100% - var(--th)) * 0.2); }
+.ticks b:nth-child(3) { left: calc(var(--th) / 2 + (100% - var(--th)) * 0.4); } .ticks b:nth-child(4) { left: calc(var(--th) / 2 + (100% - var(--th)) * 0.6); }
+.ticks b:nth-child(5) { left: calc(var(--th) / 2 + (100% - var(--th)) * 0.8); } .ticks b:nth-child(6) { left: calc(100% - var(--th) / 2); }
+.ticks b.on { color: var(--ink); font-weight: 600; }
+
+/* the start hint: the same dark glass as the pop-over, so it reads over the brightest snow */
+#hint { position: fixed; left: 50%; bottom: calc(9% + env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
+        background: linear-gradient(160deg, rgba(16,32,58,0.72), rgba(16,32,58,0.64)); border: 1px solid var(--line);
+        box-shadow: 0 8px 24px rgba(20,40,70,0.22), inset 0 1px 0 rgba(255,255,255,0.12);
+        -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+        color: rgba(255,255,255,0.97); font-size: 14px; line-height: 1.2; letter-spacing: 0; text-shadow: 0 1px 3px rgba(0,20,40,0.4);
+        pointer-events: none; opacity: 0; transition: opacity 1.4s ease; white-space: nowrap; }
+#hint.on { opacity: 1; }
+#err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 20px; pointer-events: none; }
+#err span { padding: 12px 20px; border-radius: 14px; background: rgba(255,255,255,0.75); color: #234; font-size: 15px; line-height: 1.6; text-align: center;
+            -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(20,40,70,0.2); }
+/* fingers (phones, tablets): segments, chips and sliders get >= 36-44 px hit areas; the look stays the same */
+@media (pointer: coarse) {
+  #pop { --th: 22px; }
+  .seg button { height: 36px; }
+  .wx button { padding: 9px 0 7px; }
+  #pop input[type=range] { height: 32px; }
+  .ticks { margin-top: 0; }
+}
+/* a landscape phone (or any short window): two columns, opening beside the glyph instead of above it, so everything
+   fits without scrolling. Season and the time slider on the left, weather and its amount on the right; the DOM order
+   (season, weather, speed, amount) still reads left to right, top to bottom */
+@media (max-height: 500px) and (min-width: 600px) {
+  #pop { width: 528px; bottom: calc(20px + env(safe-area-inset-bottom)); right: calc(64px + env(safe-area-inset-right));
+         max-width: calc(100% - 86px - env(safe-area-inset-left) - env(safe-area-inset-right));
+         max-height: calc(100% - 34px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+         display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto auto auto auto 1fr auto; column-gap: 24px;
+         padding: 12px 16px 14px; }
+  #pop > .status, #pop > .rule { grid-column: 1 / -1; }
+  #pop > .rule { margin: 10px -16px 10px; }
+  #capSeason { grid-area: 3 / 1; } #seasons { grid-area: 4 / 1; } #pop > .yr { grid-area: 5 / 1; margin-bottom: 12px; }
+  #capWx { grid-area: 3 / 2; } #weathers { grid-area: 4 / 2 / 7 / 3; margin-bottom: 12px; }
+  #speedRow { grid-area: 6 / 1 / 8 / 2; margin: 0; } #pop > .slider.last { grid-area: 7 / 2; }
+}
+@media (prefers-reduced-motion: reduce) { #icon, #icon .glyph, #pop, #pop *, #hint { transition-duration: 0s !important; } }

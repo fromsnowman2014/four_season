@@ -2,3 +2,5 @@
 # scratch space: stage backups, per-lane copies, verification screenshots
 work/
 **/shots/
+# build output (the release is copied to the root index.html)
+dist/

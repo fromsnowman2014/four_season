@@ -153,3 +153,12 @@ Each lane edits only its own files, in its private copy `work/lanes/<lane>/app/`
 - **Determinism**: `?seed&t` gives the same state, so `fastForward` must use the same step functions as live play.
 - **Performance gate**: uncapped fps ≥ 60 at 1920×1080 with dpr 2, for every weather.
 - **file://**: classic scripts only. No ES modules, no fetch, no workers.
+
+## Appendix B — Mobile requirements (added 2026-10-22, from the user's phone test)
+
+The Phase-1 site was hot-fixed for phones (commit "Fix mobile: fill the screen, frame the scene for portrait"). Phase 2 must carry the same behaviour into `app/` and extend it:
+- Canvas styled `position:fixed; inset:0; width:100%; height:100%; touch-action:none`; pixel size from the canvas box (`clientWidth/clientHeight`), not `innerWidth/innerHeight`. Re-size on `ResizeObserver(canvas)`, `visualViewport` resize, `orientationchange`, and a twice-a-second stale-size check that never resets a pending debounce.
+- Per-aspect camera framing `frameCamera(asp)`: landscape (w/h ≥ 1.25) unchanged; toward portrait the horizontal fov never drops below 34°, pitch −12° → −16°, yaw 0 → −9°; camera vectors mutated in place; a re-framed camera rebakes with the first-load reveal.
+- Touch: wind = a one-finger drag (that is already the Phase-2 left-drag rule; pointerType touch counts as the primary button). A lifted finger ends the drag. No page panning or zooming over the scene. Touch hint "화면을 쓸어 바람을 일으켜 보세요".
+- Chrome: icon and pop-over clear `env(safe-area-inset-*)`; pop-over `max-width: calc(100% - 44px)` and `max-height` fitting a landscape phone (scroll inside if needed); tap targets ≥ 44 px; the hint hides when the pop-over opens.
+- Performance on phones: the adaptive quality ladder must reach a stable state on an A-series GPU; keep the bake stripe budget safe for iOS (GPU watchdog).
