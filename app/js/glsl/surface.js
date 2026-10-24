@@ -18,6 +18,7 @@
   const SL = { K: 0.9, K2: 1.3, LO: 1600, HI: 500 };
   const f = v => (Number.isInteger(v) ? v.toFixed(1) : String(v));
   S.snowlineOffset = (a, line, w) => SL.K * (1 - S.smooth(line - w, line + w, a)) + SL.K2 * (1 - S.smooth(line - SL.LO, line - SL.HI, a));
+  S.SNOWLINE = SL;            // Phase 3: the house's cover model (glsl/house/surface-house.js, loaded after this file) uses the same constants
   C.SURFACE = `
 uniform vec3 uGrassDisp;     // integrated (slow) wind displacement -> rolling grass waves, wrapped by its noise period on the CPU
 uniform float uYearPhase;    // year phase 0..1 (0 = 1 March): the vegetation clock

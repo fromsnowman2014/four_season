@@ -17,16 +17,17 @@
 //   and the new rows wipe in from the bottom; the first load uses the same wipe as its progress reveal.
 //
 //  core.js loads first and creates window.SNOW (the only global). It holds S.cfg (every URL hook, parsed once),
-//  the math helpers, the camera and sun constants, the GLSL registry and the frame uniform bundle S.F with its
-//  neutral defaults.
+//  the math helpers, the camera / sun state and the scene registry (the scenes themselves: js/scenes/*.js), the GLSL
+//  registry and the frame uniform bundle S.F with its neutral defaults.
 //  No load-time side effects beyond creating the namespace (it also loads in Node: pass { window: {}, URLSearchParams }).
 //
 //  S.F — the frame uniform bundle (frozen contract; full table with units in ARCHITECTURE.md). Keyed by exact GLSL
 //  uniform name; numbers for float / int / uint, arrays or Float32Arrays for vectors, { unit, tex } for a sampler.
 //  Uploaded generically by S.uploadF(prog) to every program that declares the name (the setter comes from the
 //  getActiveUniform type, cached per program in gl.js). Filled once per frame by S.deriveF() (render.js): the static
-//  camera / sun / clock / noise fields there, then js/derive/surface.js, precip.js and atmos.js in that order (a later
-//  one may read what an earlier one set). Pass-local uniforms stay explicit in render.js / precip.js and are NOT here.
+//  camera / sun / clock / noise fields there, then js/derive/surface.js, precip.js and atmos.js in that order, then the
+//  active scene's derive (if any) and events.js (a later one may read what an earlier one set). Pass-local uniforms
+//  stay explicit in render.js / precip.js and are NOT here.
 //    render.js:   uCamPos, uCamR, uCamU, uCamF (vec3), uTanH, uSunDir (fixed: baked into the G-buffer), uTime, uNoise
 //    surface.js:  uCover, uSeasonW, uTemp, uSnowline, uWet, uGrassDisp, uYearPhase, uMelt
 //    precip.js:   uSnowCurtain, uPrecipSnow, uPrecipRain, uSnowFrac, uGale, uHeavy, uWetSnow, the snow veil (uVeilDir,
@@ -35,6 +36,8 @@
 //    atmos.js:    uSunCol, uSkyAmb, uSkyZen, uSkyHor, uFogCol, uFogP, uCloudOff, uCloudCov, uOvercast, uCumulus,
 //                 uFogDay, uMistP, uCirrus, uShadowAmp, uExposure, uBloomStr, uHorBand, uCloudP, uCloudQ, uMistQ,
 //                 uSkyResp, uGrade, uGradeP
+//    the scene's derive (Phase 3, only while that scene is active; house.js: uCozy + its look over the atmosphere), then
+//    events.js:   uFlash, uFlashPos, uQuake, uSmoke, uCrack, and the hazard particle rates uAshRate, uEmberRate, uDustRate
 //  The initial object below holds the neutral defaults of the Phase-2 environment uniforms (the ENV chunk): with
 //  these values every shader reproduces the Phase-1 look. uView is the ?view= debug channel.
 // =====================================================================================
@@ -92,37 +95,63 @@
     ground: qKV('ground'),                                    // ground state, e.g. cover:.3,wet:.8
     view: VIEWS.indexOf(Q.get('view')) + 1,                   // debug view index (0 = off), names in S.VIEWS
     gb16: Q.get('gb16') === '1',                              // test-only: force the all-RGBA16F G-buffer fallback
+    // ---- Phase-3 hooks
+    scene: Q.get('scene') || 'valley',                        // raw: valley | house (unknown ids boot the valley)
+    event: Q.get('event'),                                    // raw: quake | wildfire | strike (triggered at boot, after ?t)
   };
 
-  // ---- camera & sun
-  // high vantage over the meadow: ~230 m above the chalet basin, tilted 12 deg down (horizon sits at ~24% from the top)
-  const CAM = { pos: [0, 132, 0], yaw: 0.0, pitch: -12 * Math.PI / 180, fovY: 44 * Math.PI / 180 };
-  // camF / camR / camU are filled by frameCamera and only ever mutated in place: other files alias the arrays.
-  // S.TANH (tan of half the vertical fov) changes with the framing too: read it at call time, never cache it.
-  const camF = [0, 0, 1], camR = [1, 0, 0], camU = [0, 1, 0];
-  S.CAM = CAM; S.camF = camF; S.camR = camR; S.camU = camU;
-  // Framing per aspect ratio (w / h). Landscape (>= 1.25) is the composed 44 deg view, bit for bit the Phase-1
-  // constants. Toward portrait (phones) the vertical fov widens so the horizontal fov never drops below 34 deg, the
-  // camera tilts down 4 deg more (more meadow under a taller frame) and turns 9 deg left so the snowy peak and the
-  // hazy valley stay in frame beside the wall. (The Phase-1 hotfix blended the fov term by t as well, which let the
-  // horizontal fov dip to 33.85 deg around aspect 0.7, a portrait tablet; max() keeps the 34 deg floor and is the
-  // same value for every phone and every landscape.) Returns true when the camera moved (a baked G-buffer is stale).
-  const TAN0 = Math.tan(CAM.fovY / 2), FOV0 = CAM.fovY;
-  S.frameCamera = function (asp) {
-    const t = smooth(1.25, 0.6, asp);
-    const tanV = Math.max(TAN0, Math.tan(17 * Math.PI / 180) / asp);
-    const yaw = t > 0 ? -9 * t * Math.PI / 180 : 0, pitch = (-12 - 4 * t) * Math.PI / 180;
-    const changed = tanV !== S.TANH || yaw !== CAM.yaw || pitch !== CAM.pitch;
-    CAM.yaw = yaw; CAM.pitch = pitch; CAM.fovY = t > 0 ? 2 * Math.atan(tanV) : FOV0; S.TANH = tanV;
+  // ---- camera & sun: the state every pass and module reads. The active scene (S.scene, js/scenes/*.js) frames them:
+  // scene.frameCamera(asp) -> S.setCamera(...), scene.sun -> S.SUN. CAM.pos, camF / camR / camU and SUN are only ever
+  // mutated in place: other files alias the arrays. S.TANH (tan of half the vertical fov) changes with the framing
+  // too: read it at call time, never cache it.
+  const CAM = { pos: [0, 0, 0], yaw: 0, pitch: 0, fovY: 1 };
+  const camF = [0, 0, 1], camR = [1, 0, 0], camU = [0, 1, 0], SUN = [0, 1, 0];
+  S.CAM = CAM; S.camF = camF; S.camR = camR; S.camU = camU; S.SUN = SUN;
+  S.TANH = 1;
+  // the camera from a position, yaw, pitch (rad), tan(fovY / 2) and fovY. Returns true when it moved (a baked G-buffer
+  // is stale). camR is horizontal (no roll); camU = camF x camR
+  S.setCamera = function (pos, yaw, pitch, tanV, fovY) {
+    const changed = tanV !== S.TANH || yaw !== CAM.yaw || pitch !== CAM.pitch || pos[0] !== CAM.pos[0] || pos[1] !== CAM.pos[1] || pos[2] !== CAM.pos[2];
+    CAM.pos[0] = pos[0]; CAM.pos[1] = pos[1]; CAM.pos[2] = pos[2];
+    CAM.yaw = yaw; CAM.pitch = pitch; CAM.fovY = fovY; S.TANH = tanV;
     camF[0] = Math.sin(yaw) * Math.cos(pitch); camF[1] = Math.sin(pitch); camF[2] = Math.cos(yaw) * Math.cos(pitch);
     const l = Math.hypot(camF[2], -camF[0]);
     camR[0] = camF[2] / l; camR[1] = 0; camR[2] = -camF[0] / l;
     camU[0] = camF[1] * camR[2] - camF[2] * camR[1]; camU[1] = camF[2] * camR[0] - camF[0] * camR[2]; camU[2] = camF[0] * camR[1] - camF[1] * camR[0];  // F x R = up
     return changed;
   };
-  S.TANH = TAN0;
-  S.frameCamera(16 / 9);
-  S.SUN = (() => { const s = [-0.70, 0.47, -0.17]; const l = Math.hypot(...s); return s.map(v => v / l); })();
+  // framing per aspect ratio (w / h): the active scene's (valley: the Phase-1 camera in landscape, see js/scenes/valley.js).
+  // It also keeps S.worldR / S.worldF (polish), the world's reference basis for this aspect: the valley's camera (the
+  // Phase-2 one) whichever scene is shown. The sim's camera-relative state (the natural gale line, sim/wind.js; the
+  // veil / rain-gust scroll integrals, derive/precip.js; the tree-sway phase, main.js) follows it instead of the live
+  // camera, so the world never depends on the place: a trip to another scene and back returns the valley's world
+  // exactly (in the valley it is the live camera itself, bit for bit the Phase-2 numbers; elsewhere one dry run of the
+  // valley's framing, the live camera restored). The per-frame screen-space values (the drag steer, the veil and rain
+  // directions, the sway lean) keep the live camera.
+  const worldR = S.worldR = [1, 0, 0], worldF = S.worldF = [0, 0, 1];
+  S.frameCamera = asp => {
+    const moved = S.scene.frameCamera(asp), ref = S.scenes.valley;
+    if (ref && ref !== S.scene) {
+      const keep = { pos: CAM.pos.slice(), yaw: CAM.yaw, pitch: CAM.pitch, fovY: CAM.fovY, tanH: S.TANH };
+      ref.frameCamera(asp);
+      for (let i = 0; i < 3; i++) { worldR[i] = camR[i]; worldF[i] = camF[i]; }
+      S.setCamera(keep.pos, keep.yaw, keep.pitch, keep.tanH, keep.fovY);
+    } else for (let i = 0; i < 3; i++) { worldR[i] = camR[i]; worldF[i] = camF[i]; }
+    return moved;
+  };
+
+  // ---- scenes (Phase 3). js/scenes/*.js register S.scenes[id] = { id, name, frameCamera(asp), sun, progs, bakeIter,
+  // atmos, surface, derive } (ARCHITECTURE.md §14). S.useScene(id) makes one active (the sun is copied in place; the
+  // caller re-frames the camera and, with GL up, rebakes: S.setScene in main.js). scenes/valley.js activates the
+  // valley at load, so the camera and the sun exist before any sim step (node tests included).
+  S.scenes = {}; S.scene = null; S.sceneId = null;
+  S.useScene = function (id) {
+    const sc = S.scenes[id];
+    if (!sc) return false;
+    S.scene = sc; S.sceneId = id;
+    SUN[0] = sc.sun[0]; SUN[1] = sc.sun[1]; SUN[2] = sc.sun[2];
+    return true;
+  };
 
   // ---- GLSL registry: js/glsl/*.js register named chunks and program recipes; gl.js assembles them lazily
   S.glsl = { chunks: {}, progs: {} };
@@ -145,5 +174,14 @@
     uCirrus: 1,                      // cirrus amount (1 = the Phase-1 veil)
     uShadowAmp: 0.65,                // cloud-shadow strength (the Phase-1 constant)
     uView: S.cfg.view,               // ?view= debug channel (0 = off)
+    // ---- Phase 3 (neutral: with these values every pass draws exactly the Phase-2 image)
+    uCloudSoft: 0,                   // the scene's cumulus clean-up (FS_SKY; derive/atmos.js from scene.atmos.cloud.soft; stage 2b)
+    uCozy: 0,                        // house scene: window / porch light strength 0..1 (derive/house.js; SURFACE_HOUSE)
+    uFlash: [0, 0, 0, 0],            // hazards: lightning flash rgb radiance (linear), w envelope 0..1 (derive/events.js; HAZARD)
+    uFlashPos: [0, 1500, 4000, 0],   // hazards: strike position (world m), w: channel length (m), 0 = none
+    uQuake: [0, 0, 0, 0],            // hazards: screen shake offset xy (uv), roll (rad), intensity 0..1 (overscan, blur)
+    uSmoke: [0, 0, 0, 0],            // hazards: wildfire smoke tint rgb, w amount 0..1
+    uCrack: [0, 0, 0, 0],            // hazards: crack decals: centre xz (world m), radius (m), strength 0..1
+    uAshRate: 0, uEmberRate: 0, uDustRate: 0,   // hazards: rates of the ash / ember / dust particle kinds (precip.js counts; not uniforms)
   };
 })(window.SNOW = {});

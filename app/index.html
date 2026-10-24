@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>눈 내리는 들판</title>
+<title>사계절</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Crect width=%2724%27 height=%2724%27 rx=%276%27 fill=%27%235d7fa6%27/%3E%3Cg stroke=%27white%27 stroke-width=%271.6%27 stroke-linecap=%27round%27 fill=%27none%27%3E%3Cpath d=%27M12 4v16M5.1 8l13.8 8M5.1 16l13.8-8%27/%3E%3C/g%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/ui.css">
 </head>
 <body>
 <canvas id="c"></canvas>
-<!-- #ui block (stage-1 owner: lane B): the icon, the pop-over and the hint -->
+<!-- #ui block (Phase-3 owner: lane U): the icon, the pop-over, the hint and the place toast -->
 <svg class="sprite" aria-hidden="true">
   <defs>
     <path id="g-arm" d="M12 2.6v18.8M9.9 4.7 12 6.8l2.1-2.1M9.9 19.3 12 17.2l2.1 2.1M10.4 8.5 12 10.1l1.6-1.6M10.4 15.5 12 13.9l1.6 1.6"/>
@@ -39,6 +39,13 @@
     <use href="#g-petal" transform="rotate(216 12 12)"/><use href="#g-petal" transform="rotate(288 12 12)"/>
     <circle cx="12" cy="12" r=".55"/>
   </symbol>
+  <!-- places: two peaks with a snow line; a low house with a gable and a door -->
+  <symbol id="p-valley" viewBox="0 0 24 24">
+    <path d="M2.2 19.6h19.6M3 19.6 8.4 10.8l2.17 3.37M7.6 19.6 14.8 6.4l6.6 13.2M12.6 10.6l1.3 1.2 1.2-1.1 1.3 1.2.8-.7"/>
+  </symbol>
+  <symbol id="p-house" viewBox="0 0 24 24">
+    <path d="M2.6 11.6 12 4.6l9.4 7M5 9.8v9.6h14V9.8M2.4 19.4h19.2M10 19.4v-4.8h4v4.8"/>
+  </symbol>
   <symbol id="w-auto" viewBox="0 0 24 24">
     <path d="M18.06 8.5A7 7 0 0 0 5.11 10.78M7.1 9.11 5.11 10.78 3.81 8.53M5.94 15.5A7 7 0 0 0 18.89 13.22M16.9 14.89l1.99-1.67 1.3 2.25"/>
   </symbol>
@@ -52,6 +59,8 @@
   <symbol id="w-cloud" viewBox="0 0 24 24"><use href="#g-cloud" transform="translate(0 .4)"/></symbol>
   <symbol id="w-fog" viewBox="0 0 24 24"><use href="#g-cloud" transform="translate(0 -3.4)"/><path d="M5 17.2h14M7.5 20.6h9"/></symbol>
   <symbol id="w-rain" viewBox="0 0 24 24"><use href="#g-cloud" transform="translate(0 -3.4)"/><path d="M8.7 16.2l-1.5 4M12.7 17.2l-1.5 4M16.7 16.2l-1.5 4"/></symbol>
+  <!-- thunder: the same cloud with a bolt under it -->
+  <symbol id="w-thunder" viewBox="0 0 24 24"><use href="#g-cloud" transform="translate(0 -3.4)"/><path d="M13.6 14.6 10.5 18.5h3.4l-2.8 3.6"/></symbol>
   <symbol id="w-snow" viewBox="0 0 24 24">
     <use href="#g-cloud" transform="translate(0 -3.4)"/>
     <use href="#g-dot"/><use href="#g-dot" transform="translate(4 1.6)"/><use href="#g-dot" transform="translate(8 0)"/>
@@ -60,54 +69,82 @@
     <!-- a snowflake driven by the wind: six arms (tip Vs) and three motion lines -->
     <path d="M15 5v14M8.94 8.5l12.12 7M8.94 15.5l12.12-7M13.4 6.3 15 7.6l1.6-1.3M13.4 17.7l1.6-1.3 1.6 1.3M2.2 8.8h4.6M1.4 12h5.6M2.2 15.2h4.6"/>
   </symbol>
+  <!-- hazards: a seismograph trace; a flame with its inner tongue -->
+  <symbol id="h-quake" viewBox="0 0 24 24"><path d="M1.8 12.4h3.4l1.7-4.2 2.5 10.6 2.7-15 2.7 12.6 1.7-4h5.7"/></symbol>
+  <symbol id="h-fire" viewBox="0 0 24 24">
+    <path d="M12 21.2c-3.7 0-6.2-2.5-6.2-5.8 0-3.6 2.9-5.2 3.4-9.2 2.5 1.5 3.6 3.6 3.6 5.6 1-.6 1.7-1.7 1.9-3 2.2 1.7 3.5 4 3.5 6.6 0 3.3-2.5 5.8-6.2 5.8z"/>
+    <path d="M12 21.2c-1.6 0-2.6-1.1-2.6-2.5 0-1.6 1.4-2.4 1.9-4.1 1.5 1 2.6 2.4 2.6 4 0 1.5-.8 2.6-1.9 2.6z"/>
+  </symbol>
 </svg>
-<div id="icon" role="button" aria-label="계절과 날씨 설정" tabindex="0" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop">
+<div id="icon" role="button" aria-label="장소, 계절과 날씨 설정" tabindex="0" aria-haspopup="dialog" aria-expanded="false" aria-controls="pop">
   <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
     <use class="glyph" data-s="0" href="#g-blossom"/><use class="glyph" data-s="1" href="#g-sun"/>
     <use class="glyph" data-s="2" href="#g-leaf"/><use class="glyph" data-s="3" href="#g-flake"/>
   </svg>
 </div>
-<div id="pop" role="dialog" aria-label="계절과 날씨">
+<div id="pop" role="dialog" aria-label="장소, 계절과 날씨">
   <div class="status">
-    <span id="stSeason"></span><span class="sep" aria-hidden="true">·</span><span id="stWx"></span>
+    <span id="stPlace"></span><span class="sep" aria-hidden="true">·</span><span id="stSeason"></span><span class="sep" aria-hidden="true">·</span><span id="stWx"></span>
   </div>
   <div class="rule"><i id="stProg"></i></div>
-  <div class="cap" id="capSeason">계절</div>
-  <div class="seg" id="seasons" role="radiogroup" aria-labelledby="capSeason">
-    <i class="thumb"></i>
-    <button role="radio" data-v="auto" aria-label="자동, 계절이 흐름">자동</button><button role="radio" data-v="spring">봄</button><button role="radio" data-v="summer">여름</button><button role="radio" data-v="autumn">가을</button><button role="radio" data-v="winter">겨울</button>
+  <!-- two columns on a short (landscape phone) window, one above the other elsewhere: place + time | weather + hazards -->
+  <div class="col">
+    <div class="cap" id="capPlace">장소</div>
+    <div class="places" id="places" role="radiogroup" aria-labelledby="capPlace">
+      <button role="radio" data-v="valley"><svg><use href="#p-valley"/></svg><span>알프스 계곡</span></button><button role="radio" data-v="house"><svg><use href="#p-house"/></svg><span>우리 집</span></button>
+    </div>
+    <div class="cap" id="capSeason">계절</div>
+    <div class="seg" id="seasons" role="radiogroup" aria-labelledby="capSeason">
+      <i class="thumb"></i>
+      <button role="radio" data-v="auto" aria-label="자동, 계절이 흐름">자동</button><button role="radio" data-v="spring">봄</button><button role="radio" data-v="summer">여름</button><button role="radio" data-v="autumn">가을</button><button role="radio" data-v="winter">겨울</button>
+    </div>
+    <div class="yr" aria-hidden="true"><i class="done"></i><i class="dot"></i></div>
+    <label class="slider" id="speedRow">
+      <span class="hd"><span>시간 흐름</span><i id="speedv"></i></span>
+      <input type="range" id="speed" min="0" max="5" step="1" value="2" aria-valuetext="1배">
+      <span class="ticks" aria-hidden="true"><b>0.25×</b><b>0.5×</b><b>1×</b><b>2×</b><b>4×</b><b>8×</b></span>
+    </label>
   </div>
-  <div class="yr" aria-hidden="true"><i class="done"></i><i class="dot"></i></div>
-  <div class="cap" id="capWx">날씨</div>
-  <div class="wx" id="weathers" role="radiogroup" aria-labelledby="capWx">
-    <button role="radio" data-v="auto"><svg><use href="#w-auto"/></svg><span>자동</span></button>
-    <button role="radio" data-v="clear"><svg><use href="#g-sun"/></svg><span>맑음</span></button>
-    <button role="radio" data-v="cumulus"><svg><use href="#w-cumulus"/></svg><span>구름</span></button>
-    <button role="radio" data-v="overcast"><svg><use href="#w-cloud"/></svg><span>흐림</span></button>
-    <button role="radio" data-v="fog"><svg><use href="#w-fog"/></svg><span>안개</span></button>
-    <button role="radio" data-v="rain"><svg><use href="#w-rain"/></svg><span>비</span></button>
-    <button role="radio" data-v="snow"><svg><use href="#w-snow"/></svg><span>눈</span></button>
-    <button role="radio" data-v="blizzard"><svg><use href="#w-blizzard"/></svg><span>폭설</span></button>
+  <div class="col">
+    <div class="cap" id="capWx">날씨</div>
+    <div class="wx" id="weathers" role="radiogroup" aria-labelledby="capWx">
+      <button role="radio" data-v="auto" aria-label="자동, 날씨가 바뀜"><svg><use href="#w-auto"/></svg><span>자동</span></button>
+      <button role="radio" data-v="clear"><svg><use href="#g-sun"/></svg><span>맑음</span></button>
+      <button role="radio" data-v="cumulus"><svg><use href="#w-cumulus"/></svg><span>구름</span></button>
+      <button role="radio" data-v="overcast"><svg><use href="#w-cloud"/></svg><span>흐림</span></button>
+      <button role="radio" data-v="fog"><svg><use href="#w-fog"/></svg><span>안개</span></button>
+      <button role="radio" data-v="rain"><svg><use href="#w-rain"/></svg><span>비</span></button>
+      <button role="radio" data-v="thunder"><svg><use href="#w-thunder"/></svg><span>뇌우</span></button>
+      <button role="radio" data-v="snow"><svg><use href="#w-snow"/></svg><span>눈</span></button>
+      <button role="radio" data-v="blizzard"><svg><use href="#w-blizzard"/></svg><span>폭설</span></button>
+    </div>
+    <label class="slider" id="amountRow">
+      <span class="hd"><span>눈·비의 양</span><i id="amountv">50%</i></span>
+      <input type="range" id="amount" min="0" max="1" step="0.01" value="0.5">
+    </label>
+    <div class="rule sub"></div>
+    <div class="cap hzcap"><span id="capHz">자연 현상</span>
+      <button role="switch" id="hzAuto" aria-checked="false"><span>가끔 자동으로</span><i class="sw" aria-hidden="true"></i></button>
+    </div>
+    <div class="hz" id="hazards" role="group" aria-labelledby="capHz">
+      <button data-k="quake" aria-label="지진 일으키기"><svg><use href="#h-quake"/></svg><span>지진</span></button><button data-k="wildfire" aria-label="산불 연기 일으키기"><svg><use href="#h-fire"/></svg><span>산불</span></button>
+    </div>
   </div>
-  <label class="slider" id="speedRow">
-    <span class="hd"><span>시간 흐름</span><i id="speedv"></i></span>
-    <input type="range" id="speed" min="0" max="5" step="1" value="2" aria-valuetext="1배">
-    <span class="ticks" aria-hidden="true"><b>0.25×</b><b>0.5×</b><b>1×</b><b>2×</b><b>4×</b><b>8×</b></span>
-  </label>
-  <label class="slider last">
-    <span class="hd"><span>눈·비의 양</span><i id="amountv">50%</i></span>
-    <input type="range" id="amount" min="0" max="1" step="0.01" value="0.5">
-  </label>
 </div>
 <div id="hint">드래그하여 바람을 일으켜 보세요</div>
+<div id="toast" aria-live="polite"></div>
 <!-- /#ui block -->
 <div id="err"><span></span></div>
 
 <!-- Classic scripts in a fixed order (works from file://: no modules, no fetch). Each file is one IIFE on window.SNOW;
      only main.js has load-time side effects (boot). The js/glsl files only register chunks and program recipes,
-     assembled lazily by buildPrograms() in gl.js, so their order among themselves does not matter. This list is
-     frozen during the stage-1 lanes: every file a lane owns already exists (see ARCHITECTURE.md). -->
+     assembled lazily by buildPrograms() in gl.js, so their order among themselves does not matter, except that
+     glsl/house/surface-house.js reads S.SNOWLINE from glsl/surface.js. js/scenes/valley.js follows core.js: it
+     activates the default scene at load. This list is frozen during the Phase-3 stage-1 lanes: every file a lane owns
+     already exists (see ARCHITECTURE.md §1). -->
 <script src="js/core.js"></script>
+<script src="js/scenes/valley.js"></script>
+<script src="js/scenes/house.js"></script>
 <script src="js/glsl/common.js"></script>
 <script src="js/glsl/atmos.js"></script>
 <script src="js/glsl/gbuf-noise.js"></script>
@@ -116,8 +153,14 @@
 <script src="js/glsl/gbuf-materials.js"></script>
 <script src="js/glsl/gbuf-main.js"></script>
 <script src="js/glsl/surface.js"></script>
+<script src="js/glsl/house/house-sdf.js"></script>
+<script src="js/glsl/house/gbuf-house.js"></script>
+<script src="js/glsl/house/surface-house.js"></script>
 <script src="js/glsl/sky.js"></script>
 <script src="js/glsl/veil.js"></script>
+<script src="js/glsl/hazard.js"></script>
+<script src="js/glsl/hazard-bolt.js"></script>
+<script src="js/glsl/hazard-particles.js"></script>
 <script src="js/glsl/shade.js"></script>
 <script src="js/glsl/flake.js"></script>
 <script src="js/glsl/rain.js"></script>
@@ -128,9 +171,12 @@
 <script src="js/sim/weather.js"></script>
 <script src="js/sim/ground.js"></script>
 <script src="js/sim/wind.js"></script>
+<script src="js/sim/events.js"></script>
 <script src="js/derive/surface.js"></script>
 <script src="js/derive/precip.js"></script>
 <script src="js/derive/atmos.js"></script>
+<script src="js/derive/house.js"></script>
+<script src="js/derive/events.js"></script>
 <script src="js/precip.js"></script>
 <script src="js/render.js"></script>
 <script src="js/input.js"></script>

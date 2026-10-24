@@ -1,7 +1,7 @@
-/* Chrome of the snow simulation (stage-1 owner: lane B): one icon, a glass pop-over, a hint, the error card. */
-:root { --ink: rgba(255,255,255,0.97); --ink2: rgba(255,255,255,0.80); --ink3: rgba(255,255,255,0.74);
+/* Chrome of the snow simulation (Phase-3 owner: lane U): one icon, a glass pop-over, a hint, a place toast, the error card. */
+:root { --ink: rgba(255,255,255,0.97); --ink2: rgba(255,255,255,0.84); --ink3: rgba(255,255,255,0.78);
         --line: rgba(255,255,255,0.22); --hair: rgba(255,255,255,0.13); --groove: rgba(0,12,30,0.24);
-        --fill: rgba(255,255,255,0.21); --hov: rgba(255,255,255,0.08); --ease: cubic-bezier(0.3, 0.7, 0.2, 1); }
+        --fill: rgba(255,255,255,0.17); --hov: rgba(255,255,255,0.08); --ease: cubic-bezier(0.3, 0.7, 0.2, 1); }
 /* body colour = the composite's fade base (0.80, 0.85, 0.90), so the pre-script page, the first GL frame and the reveal all start from one colour */
 html, body { margin: 0; height: 100%; overflow: hidden; background: rgb(204,217,230); user-select: none; -webkit-user-select: none;
              font: 500 12.5px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
@@ -31,19 +31,20 @@ canvas.drag { cursor: grabbing; }
 /* hover styles only where there is a hover (a tap on a phone would leave them stuck) */
 @media (hover: hover) { #icon:hover { opacity: 0.8; transition-duration: 0.25s; } }
 
-/* glass pop-over anchored above the icon: a cool dark frosted glass, so white ink keeps >= 4.5:1 over snow. It clears
+/* glass pop-over anchored above the icon: a cool dark frosted glass, so every ink keeps >= 4.5:1 even over pure white
+   snow or the bright house sky behind its lightest corner (glass .76: --ink3 4.8, --ink2 5.3, white on a filled chip 4.5). It clears
    the safe areas and scrolls only in a window too short for it (a landscape phone gets the compact layout below);
    --th is the slider thumb (bigger for fingers) */
 #pop { --th: 14px; position: fixed; right: calc(22px + env(safe-area-inset-right)); bottom: calc(62px + env(safe-area-inset-bottom)); width: 272px;
        max-width: calc(100% - 44px - env(safe-area-inset-left) - env(safe-area-inset-right));
        max-height: calc(100% - 76px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); overflow-y: auto; overscroll-behavior: contain;
        touch-action: pan-y; scrollbar-width: thin; box-sizing: border-box; padding: 13px 16px 15px; border-radius: 18px;
-       background: linear-gradient(160deg, rgba(16,32,58,0.76), rgba(16,32,58,0.68));
+       background: linear-gradient(160deg, rgba(16,32,58,0.82), rgba(16,32,58,0.76));
        border: 1px solid var(--line); box-shadow: 0 12px 36px rgba(20,40,70,0.30), inset 0 1px 0 rgba(255,255,255,0.14);
        -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
        color: var(--ink); text-shadow: 0 1px 2px rgba(0,20,40,0.35);
        opacity: 0; transform: translateY(6px) scale(0.98); transform-origin: 100% 100%; pointer-events: none; visibility: hidden;
-       transition: opacity 0.22s ease, transform 0.22s ease, visibility 0s linear 0.22s; }
+       transition: opacity 0.22s ease, transform 0.22s ease, visibility 0s linear 0.22s; z-index: 2; }
 #pop.open { opacity: 1; transform: none; pointer-events: auto; visibility: visible; transition-delay: 0s; }
 :where(#pop button) { font: inherit; color: inherit; text-shadow: inherit; letter-spacing: 0; margin: 0; padding: 0; border: 0; background: none;
               cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -54,7 +55,7 @@ canvas.drag { cursor: grabbing; }
 
 /* 1) status: season, weather; the hairline under it doubles as the weather-transition progress */
 .status { display: flex; align-items: center; gap: 6px; height: 20px; font-size: 13.5px; white-space: nowrap; }
-#stSeason { font-weight: 600; }
+#stPlace { font-weight: 600; }
 .sep { color: var(--ink3); }
 #stWx { color: var(--ink); font-variant-numeric: tabular-nums; }
 .rule { position: relative; height: 1px; margin: 12px -16px 11px; background: var(--hair); }
@@ -65,6 +66,21 @@ canvas.drag { cursor: grabbing; }
 /* section captions */
 .cap, .hd { display: flex; justify-content: space-between; align-items: baseline; font-size: 11.5px; line-height: 15px; color: var(--ink2); margin: 0 0 6px; }
 .hd i { font-style: normal; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* 1b) place: two glass cards with a line glyph; the checked one is soft filled glass (like a weather chip). While the
+   switched place bakes, a slow sheen crosses its card */
+.places { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 14px; }
+.places button { position: relative; overflow: hidden; display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 10px 0 11px; border-radius: 12px;
+                 font-size: 12.5px; color: var(--ink2); background: rgba(255,255,255,0.045); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.13);
+                 white-space: nowrap; transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease; }
+@media (hover: hover) { .places button:hover { background: var(--hov); color: var(--ink); } }
+.places button[aria-checked="true"] { background: var(--fill); color: var(--ink); box-shadow: 0 1px 3px rgba(0,10,30,0.2), inset 0 0.5px 0 rgba(255,255,255,0.24); }
+.places svg { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round;
+              filter: drop-shadow(0 1px 1.5px rgba(0,20,40,0.35)); }
+.places button.busy::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, transparent 35%, rgba(255,255,255,0.2) 50%, transparent 65%) no-repeat; background-size: 220% 100%;
+  animation: sheen 1.3s ease-in-out infinite; }
+@keyframes sheen { from { background-position: 130% 0; } to { background-position: -30% 0; } }
 
 /* 2) season: one segmented control; the glass thumb slides under the checked segment (--i set from JS) */
 .seg { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); padding: 2px; margin: 0; border-radius: 10px;
@@ -78,14 +94,17 @@ canvas.drag { cursor: grabbing; }
 
 /* the year under the four season segments (phase 0 = 1 March at the left edge of 봄): a hairline, the part of the
    year already gone a shade brighter, a small dot for today; --y set from JS */
-.yr { position: relative; height: 5px; margin: 6px 2px 13px calc(2px + (100% - 4px) / 5); }
+.yr { position: relative; height: 5px; margin: 6px 2px 12px calc(2px + (100% - 4px) / 5); }
 .yr::before { content: ""; position: absolute; left: 0; right: 0; top: 2px; height: 1px; background: rgba(255,255,255,0.14); }
 .yr .done { position: absolute; left: 0; top: 2px; height: 1px; width: calc(var(--y, 0) * 100%); background: rgba(255,255,255,0.42); }
 .yr .dot { position: absolute; top: 0; left: calc(var(--y, 0) * 100%); width: 4px; height: 4px; margin: 0.5px 0 0 -2px; border-radius: 50%;
            background: #fff; box-shadow: 0 0 0 1.5px rgba(16,32,58,0.5), 0 1px 2px rgba(0,20,40,0.4); }
 
-/* 3) weather: a 4 x 2 grid of line icons with a small label; the checked one is soft filled glass */
-.wx { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px 3px; margin: 0 0 14px; }
+/* 3) weather: 자동 is one tall cell on the left (set off by a hairline), the eight states a 4 x 2 grid beside it, dry
+   skies over precipitation (5 x 2 cells in all); line icons with a small label, the checked one soft filled glass */
+.wx { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px 2px; margin: 0 0 12px; }
+.wx [data-v="auto"] { grid-row: span 2; position: relative; justify-content: center; margin-right: 6px; }
+.wx [data-v="auto"]::after { content: ""; position: absolute; right: -4.5px; top: 18%; bottom: 18%; width: 1px; background: var(--hair); }
 .wx button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 0 5px; border-radius: 10px; color: var(--ink2);
              transition: background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease; }
 @media (hover: hover) { .wx button:hover { background: var(--hov); color: var(--ink); } }
@@ -96,8 +115,7 @@ canvas.drag { cursor: grabbing; }
 
 /* 4) / 5) sliders: two-tone track (filled part white, the rest a dark groove) so the range reads on snow and on meadow;
    --p is set from JS. The time slider is stepped: its six stops are labelled under the track */
-.slider { display: block; margin: 0 0 12px; cursor: default; }
-.slider.last { margin-bottom: 0; }
+.slider { display: block; margin: 0 0 14px; cursor: default; }
 #pop input[type=range] { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 14px; margin: 0; background: none; cursor: pointer;
                          -webkit-tap-highlight-color: transparent; }
 #pop input[type=range]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px;
@@ -121,6 +139,31 @@ canvas.drag { cursor: grabbing; }
 .ticks b:nth-child(5) { left: calc(var(--th) / 2 + (100% - var(--th)) * 0.8); } .ticks b:nth-child(6) { left: calc(100% - var(--th) / 2); }
 .ticks b.on { color: var(--ink); font-weight: 600; }
 
+/* 6) natural hazards: a hairline sets them off (actions, not settings); two momentary glass buttons that glow while
+   their event runs (a quake ~15 s, wildfire smoke ~3 min), and a small 가끔 자동으로 switch in the caption row */
+.rule.sub { margin: 0 0 12px; }
+.hzcap { align-items: center; }
+#hzAuto { display: flex; align-items: center; gap: 7px; height: 22px; margin: -4px -2px -4px 0; padding: 0 2px; border-radius: 11px; font-size: 11.5px; color: var(--ink2); transition: color 0.2s ease; }
+@media (hover: hover) { #hzAuto:hover { color: var(--ink); } }
+#hzAuto[aria-checked="true"] { color: var(--ink); }
+#hzAuto .sw { position: relative; flex: none; width: 26px; height: 15px; border-radius: 8px; background: rgba(0,12,30,0.38);
+              box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.18); transition: background-color 0.22s ease; }
+#hzAuto .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; background: rgba(255,255,255,0.86);
+                     box-shadow: 0 1px 2px rgba(0,20,40,0.35); transition: transform 0.22s var(--ease), background-color 0.22s ease; }
+#hzAuto[aria-checked="true"] .sw { background: rgba(255,255,255,0.42); }
+#hzAuto[aria-checked="true"] .sw::after { transform: translateX(11px); background: #fff; }
+.hz { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.hz button { position: relative; display: flex; align-items: center; justify-content: center; gap: 7px; height: 34px; border-radius: 10px; font-size: 12.5px; color: var(--ink2);
+             background: rgba(255,255,255,0.045); box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.13);
+             transition: background-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease; }
+@media (hover: hover) { .hz button:hover { background: var(--hov); color: var(--ink); } }
+.hz button:active { transform: scale(0.98); }
+.hz svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round;
+          filter: drop-shadow(0 1px 1.5px rgba(0,20,40,0.35)); }
+.hz button.on { background: var(--fill); color: var(--ink); box-shadow: 0 1px 3px rgba(0,10,30,0.2), inset 0 0.5px 0 rgba(255,255,255,0.24); }
+.hz button.on svg { animation: breathe 1.6s ease-in-out infinite alternate; }
+@keyframes breathe { from { opacity: 1; } to { opacity: 0.55; } }
+
 /* the start hint: the same dark glass as the pop-over, so it reads over the brightest snow */
 #hint { position: fixed; left: 50%; bottom: calc(9% + env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
         background: linear-gradient(160deg, rgba(16,32,58,0.72), rgba(16,32,58,0.64)); border: 1px solid var(--line);
@@ -129,6 +172,15 @@ canvas.drag { cursor: grabbing; }
         color: rgba(255,255,255,0.97); font-size: 14px; line-height: 1.2; letter-spacing: 0; text-shadow: 0 1px 3px rgba(0,20,40,0.4);
         pointer-events: none; opacity: 0; transition: opacity 1.4s ease; white-space: nowrap; }
 #hint.on { opacity: 1; }
+/* the place toast (a ← / → switch with the pop-over closed): the hint's glass, the place's name, ~1.6 s */
+#toast { position: fixed; left: 50%; bottom: calc(9% + env(safe-area-inset-bottom)); transform: translateX(-50%); padding: 9px 18px; border-radius: 20px;
+         background: linear-gradient(160deg, rgba(16,32,58,0.82), rgba(16,32,58,0.76)); border: 1px solid var(--line);
+         box-shadow: 0 8px 24px rgba(20,40,70,0.22), inset 0 1px 0 rgba(255,255,255,0.12);
+         -webkit-backdrop-filter: blur(18px) saturate(1.3); backdrop-filter: blur(18px) saturate(1.3);
+         color: rgba(255,255,255,0.97); font-size: 14px; font-weight: 600; line-height: 1.2; text-shadow: 0 1px 3px rgba(0,20,40,0.4);
+         pointer-events: none; opacity: 0; transition: opacity 0.6s ease; white-space: nowrap; }
+#toast:empty { display: none; }
+#toast.on { opacity: 1; transition-duration: 0.2s; }
 #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 20px; pointer-events: none; }
 #err span { padding: 12px 20px; border-radius: 14px; background: rgba(255,255,255,0.75); color: #234; font-size: 15px; line-height: 1.6; text-align: center;
             -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: 0 6px 24px rgba(20,40,70,0.2); }
@@ -136,23 +188,49 @@ canvas.drag { cursor: grabbing; }
 @media (pointer: coarse) {
   #pop { --th: 22px; }
   .seg button { height: 36px; }
+  .places button { height: 46px; }
   .wx button { padding: 9px 0 7px; }
+  .hz button { height: 44px; }
+  #hzAuto { height: 36px; margin: -11px -6px -11px 0; padding: 0 6px; }
   #pop input[type=range] { height: 32px; }
   .ticks { margin-top: 0; }
 }
-/* a landscape phone (or any short window): two columns, opening beside the glyph instead of above it, so everything
-   fits without scrolling. Season and the time slider on the left, weather and its amount on the right; the DOM order
-   (season, weather, speed, amount) still reads left to right, top to bottom */
-@media (max-height: 500px) and (min-width: 600px) {
-  #pop { width: 528px; bottom: calc(20px + env(safe-area-inset-bottom)); right: calc(64px + env(safe-area-inset-right));
-         max-width: calc(100% - 86px - env(safe-area-inset-left) - env(safe-area-inset-right));
-         max-height: calc(100% - 34px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
-         display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto auto auto auto 1fr auto; column-gap: 24px;
-         padding: 12px 16px 14px; }
-  #pop > .status, #pop > .rule { grid-column: 1 / -1; }
+/* a portrait phone with the browser's bars showing (390 x ~660): the time slider's stops lose their labels (the
+   caption still reads 1년 = …), the chips get a little tighter; still finger-sized */
+@media (max-width: 599px) and (max-height: 760px) {
+  #pop { padding-top: 12px; padding-bottom: 13px; }
   #pop > .rule { margin: 10px -16px 10px; }
-  #capSeason { grid-area: 3 / 1; } #seasons { grid-area: 4 / 1; } #pop > .yr { grid-area: 5 / 1; margin-bottom: 12px; }
-  #capWx { grid-area: 3 / 2; } #weathers { grid-area: 4 / 2 / 7 / 3; margin-bottom: 12px; }
-  #speedRow { grid-area: 6 / 1 / 8 / 2; margin: 0; } #pop > .slider.last { grid-area: 7 / 2; }
+  .places { margin-bottom: 12px; }
+  .places button { height: 44px; }
+  .ticks { display: none; }
+  .wx button { padding: 7px 0 5px; }
+  .slider, .yr { margin-bottom: 11px; }
+  .wx { margin-bottom: 10px; }
+  .rule.sub { margin-bottom: 10px; }
 }
-@media (prefers-reduced-motion: reduce) { #icon, #icon .glyph, #pop, #pop *, #hint { transition-duration: 0s !important; } }
+/* a landscape phone (or any short window): two columns, opening beside the glyph instead of above it, so everything
+   fits without scrolling: place and time (season, year, speed) on the left, weather (its amount) and the hazards on
+   the right; the DOM order (the two .col blocks) still reads left column, then right */
+@media (max-height: 500px) and (min-width: 600px) {
+  #pop { width: 548px; bottom: calc(14px + env(safe-area-inset-bottom)); right: calc(64px + env(safe-area-inset-right));
+         max-width: calc(100% - 86px - env(safe-area-inset-left) - env(safe-area-inset-right));
+         max-height: calc(100% - 22px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+         display: grid; grid-template-columns: 1fr 1fr; align-content: start; column-gap: 24px; padding: 11px 16px 13px; }
+  #pop > .status, #pop > .rule { grid-column: 1 / -1; }
+  #pop > .rule { margin: 9px -16px 10px; }
+  #pop .col > :last-child { margin-bottom: 0; }
+  /* a 2 x 2 of bands: place + season | weather + amount above, time | hazards below, each lower band under its own
+     hairline at the same height (the time slider sits at the bottom of the left column) */
+  #pop .col { display: flex; flex-direction: column; }
+  #speedRow { margin-top: auto; padding-top: 9px; border-top: 1px solid var(--hair); }
+  .places { margin-bottom: 11px; }
+  .yr { margin-bottom: 10px; }
+  .wx { margin-bottom: 9px; }
+  .slider { margin-bottom: 10px; }
+  .rule.sub { margin-bottom: 9px; }
+}
+@media (max-height: 500px) and (min-width: 600px) and (pointer: coarse) {
+  .places button { height: 44px; }
+  .wx button { padding: 6px 0 4px; }
+}
+@media (prefers-reduced-motion: reduce) { #icon, #icon .glyph, #pop, #pop *, #pop *::after, #hint, #toast { transition-duration: 0s !important; animation: none !important; } }

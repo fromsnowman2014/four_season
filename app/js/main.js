@@ -1,20 +1,25 @@
 // =====================================================================================
 //  main.js — the orchestrator (frozen): the animation clocks, one sim step in the contract order, fastForward /
-//  advance, window.snowSim (state() + every sim module's api), the frame loop and boot. The only file with load-time
-//  side effects: it boots at the end when a document exists (in node, for tests/sim.mjs, it only registers).
+//  advance, window.snowSim (state() + every sim module's api), the scene switch, the frame loop and boot. The only file
+//  with load-time side effects: it boots at the end when a document exists (in node, for tests/sim.mjs, it only
+//  registers).
 //
 //  Per live step (dt real s): input -> climate / weather / ground (dt x speed climate s, substeps <= 0.25 s) -> wind
-//  (dt) -> the animation integrals (dt): dispA / dispB here, the derive modules' own (cloud; fallI, tumI, rainI,
-//  veilI, veilR, gustR), the tree-sway phase here. Then per frame: S.deriveF() -> S.render().
+//  (dt) -> events (dt: the hazards) -> the animation integrals (dt): dispA / dispB here, the derive modules' own (cloud;
+//  fallI, tumI, rainI, veilI, veilR, gustR; house, events), the tree-sway phase here. Then per frame: S.deriveF() ->
+//  S.render().
 // =====================================================================================
 (function (S) {
   'use strict';
-  const { clamp, lerp, camR } = S;
+  const { clamp, lerp, worldR } = S;
   const cfg = S.cfg;
   const FRAMES = cfg.frames;
   const R = S.R, perf = S.perf;
-  const MODS = ['climate', 'weather', 'ground', 'wind'];
-  const DERIVE = ['surface', 'precip', 'atmos'];
+  const MODS = ['climate', 'weather', 'ground', 'wind', 'events'];
+  // every derive module runs init / step whatever the scene (their clocks never depend on the scene history); frame():
+  // surface, precip, atmos, the active scene's derive, events (render.js S.deriveF). The scenes' own derives come from
+  // the registry (js/scenes/*.js load before this file), in registration order: today ['house']
+  const DERIVE = ['surface', 'precip', 'atmos', ...new Set(Object.values(S.scenes).map(sc => sc.derive).filter(Boolean)), 'events'];
   const SUB = 0.25;      // the climate substep limit (climate s) and the fastForward / advance step (s)
 
   // =====================================================================================
@@ -44,11 +49,12 @@
     const dtc = dt * S.climate.s.speed, n = Math.max(1, Math.ceil(dtc / SUB - 1e-9)), h = dtc / n;
     for (let i = 0; i < n; i++) { S.climate.step(h, ff); S.weather.step(h, ff); S.ground.step(h, ff); }
     S.wind.step(dt, ff);
+    S.events.step(dt, ff);
     const wA = S.wind.s.windA, wB = S.wind.s.windB;
     for (let i = 0; i < 3; i++) { anim.dispA[i] += wA[i] * dt; anim.dispB[i] += wB[i] * dt; }
     for (const k of DERIVE) S.derive[k].step(dt, ff);
     if (!ff) {
-      const wl = wA[0] * camR[0] + wA[2] * camR[2];
+      const wl = wA[0] * worldR[0] + wA[2] * worldR[2];     // (the world's frame, core.js: scene-independent)
       anim.swayPh = (anim.swayPh + (1.3 + 0.08 * Math.abs(wl)) * dt) % (2 * Math.PI);
     } else anim.time += dt;
   }
@@ -56,24 +62,43 @@
   function advance(T) { for (let t = 0; t < T; t += SUB) simStep(Math.min(SUB, T - t), true); }
   S.simStep = simStep; S.advance = advance;
 
-  // snowSim.state(): the Phase-1 fields first, then every module's snapshot (keys never override earlier ones)
+  // snowSim.state(): the Phase-1 fields first, then every module's snapshot (keys never override earlier ones). ready:
+  // the active scene is fully shown (false from a scene switch until its bake is swapped in; a resize rebake behind a
+  // live scene stays ready)
   S.state = function () {
     const wx = S.weather.s, w = S.wind.s;
     const st = { coverage: +S.ground.s.cover.toFixed(4), storm: +wx.curtain.toFixed(4), sky: +wx.ch.overcast.toFixed(4), tail: +wx.tail.toFixed(4),
       windX: +((w.windA[0] + w.windB[0]) / 2).toFixed(3), windZ: +((w.windA[2] + w.windB[2]) / 2).toFixed(3),
-      flakeCount: S.precipCount.snow, fps: +anim.fps.toFixed(1), ready: R.readyTime >= 0, amount: wx.amount, auto: wx.auto,
+      flakeCount: S.precipCount.snow, fps: +anim.fps.toFixed(1), ready: R.readyTime >= 0 && !!R.gbCur, amount: wx.amount, auto: wx.auto,
       quality: perf.rs, perfLevel: perf.level, frameMs: +perf.avgMs.toFixed(1), buildMs: Math.round(R.buildMs), compileMs: Math.round(S.compileMs), res: [R.W, R.H], renderRes: [R.Ws, R.Hs] };
     for (const m of MODS) { const snap = S[m].snapshot(); for (const k of Object.keys(snap)) if (!(k in st)) st[k] = snap[k]; }
     st.rainCount = S.precipCount.rain;
     st.g3 = R.g3Fmt;
+    st.scene = S.sceneId;
     return st;
   };
-  // window.snowSim: state, advance, and the api of every sim module (accessors kept): climate (setSeason, speed),
-  // weather (setWeather, setStorm, triggerBlizzard, amount, auto), ground (setCoverage, reset, resetSnow), wind
+  // window.snowSim: state, advance, setScene / scene, and the api of every sim module (accessors kept): climate
+  // (setSeason, speed), weather (setWeather, setStorm, triggerBlizzard, amount, auto), ground (setCoverage, reset,
+  // resetSnow), wind, events (trigger, hazardsAuto)
   S.makeApi = function () {
-    const api = { state: S.state, advance(sec) { advance(Math.max(0, +sec || 0)); return S.state(); } };
+    const api = { state: S.state, advance(sec) { advance(Math.max(0, +sec || 0)); return S.state(); },
+      setScene(id) { return S.setScene(id); }, get scene() { return S.sceneId; } };
     for (const m of MODS) Object.defineProperties(api, Object.getOwnPropertyDescriptors(S[m].api));
     return api;
+  };
+
+  // Switch the scene (valley | house; snowSim.setScene, the UI): the world goes on (climate, weather, ground, wind,
+  // hazards, every clock), only the place changes: the sun and the camera are the new scene's, its programs are built
+  // once (then cached), the old G-buffer is dropped and the new one revealed like a first load, the sky history and
+  // the precipitation boxes restart (gl.js S.switchSceneGL). Unknown ids and the active scene are a no-op. Returns
+  // the active scene id
+  S.setScene = function (id) {
+    id = String(id);
+    if (!S.scenes[id] || id === S.sceneId) return S.sceneId;
+    S.useScene(id);
+    S.switchSceneGL();
+    if (S.syncUI) S.syncUI();
+    return S.sceneId;
   };
 
   // =====================================================================================
@@ -95,6 +120,7 @@
       S.deriveF();
       S.render();
       if (!cfg.fixed && R.readyTime >= 0 && anim.wall - R.readyTime > 3 && !R.gbNext) S.controller(dt);
+      S.prewarmTick();          // the other scenes' programs, in the background once this one is shown (gl.js)
     }
     S.updateUI();
     S.checkSize();            // twice a second: a stale canvas size (a missed resize event on a phone) schedules a resize
@@ -105,6 +131,7 @@
   function boot() {
     S.initContext();          // fatal (throws) without WebGL2
     S.bindGLEvents();
+    S.useScene(S.scenes[cfg.scene] ? cfg.scene : 'valley');        // ?scene= (the valley by default)
     { const [w, h] = S.targetSize(); S.frameCamera(w / h); }       // this viewport's framing before the sim starts (its wind is camera-relative)
     S.initSim(cfg);
     S.bindInput();
@@ -114,6 +141,7 @@
     lastNow = performance.now() / 1000;
     advance(cfg.t0); anim.time = cfg.t0;                           // ?t: the same steps as snowSim.advance
     if (cfg.cover !== null) S.ground.api.setCoverage(cfg.cover);   // ?cover applies after the fast-forward
+    if (cfg.event) S.events.api.trigger(cfg.event);                // ?event= starts now (after the fast-forward)
     try { S.initGL(); } catch (e) { S.fatal('초기화 실패: ' + e.message); }
     requestAnimationFrame(frame);
   }

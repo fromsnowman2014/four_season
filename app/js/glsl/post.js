@@ -48,33 +48,43 @@ void main() {
   c += texture(uSrc, uv + uSrcInv).rgb + texture(uSrc, uv - uSrcInv).rgb + texture(uSrc, uv + vec2(uSrcInv.x, -uSrcInv.y)).rgb + texture(uSrc, uv + vec2(-uSrcInv.x, uSrcInv.y)).rgb;
   o = vec4(c / 16.0, 1.0);
 }`;
-  C.FS_COMP = `uniform sampler2D uHdr, uBloom, uScene;
+  // The composite. A scene may add its own composite step (Phase 3, lane H: the house's light halos in the evening air,
+  // its highlight colour): FS_COMP_SCENE is FS_COMP with a prototype of sceneComp after its uniforms and one call,
+  // c = sceneComp(c, uvS, frag), on the linear HDR frame (after the sparkle, before the exposure); the scene's chunk
+  // follows FS_COMP_SCENE in its recipe 'comp@<scene>' (so it sees uExposure, uGrade, ...), defines sceneComp, and the
+  // recipe replaces 'comp' (scene.progs). FS_COMP itself (the valley's) is generated without either line: byte-identical
+  // to stage 0. (Stage 2b) FS_COMP_SCENE also lets the scene draw its reveal backdrop (sceneReveal, display space: the
+  // house's evening sky instead of the flat pale screen) behind the first-load / scene-switch reveal edge.
+  const comp = hook => `uniform sampler2D uHdr, uBloom, uScene;
 uniform float uExposure, uBloomStr, uFrame, uTwinkleT;
 uniform vec3 uGrade;         // white balance (season; rain cools it)
 uniform vec3 uGradeP;        // x desaturation, y S-curve strength, z sparkle gate (direct sun: overcast, fog; > 1: denser, brighter glints)
-out vec4 o;
+${hook ? 'vec3 sceneComp(vec3 c, vec2 uv, vec2 frag);    // the scene\'s own composite step (defined after this chunk)\n' : ''}${hook ? 'vec3 sceneReveal(vec2 frag);    // the scene\'s reveal backdrop (graded): what the unbaked rows show\n' : ''}out vec4 o;
 vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
 float h12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 void main() {
   vec2 uv = gl_FragCoord.xy / uRes;
   if (uView > 0) { o = vec4(texture(uHdr, uv).rgb, 1.0); return; }      // ?view=: the debug channel, ungraded
-  vec3 c = texture(uHdr, uv).rgb + texture(uBloom, uv).rgb * uBloomStr;
+  // the hazards' screen shake (HAZARD; neutral in stage 0: uvS = uv, frag = gl_FragCoord.xy exactly): the frame is
+  // sampled at uvS (offset, roll, overscan), with the shake's motion blur inside hazardComp
+  vec2 uvS = hazardShake(uv), frag = gl_FragCoord.xy + (uvS - uv) * uRes;
+  vec3 c = hazardComp(uHdr, uBloom, uBloomStr, uvS);
   // snow sparkle: 1 px sun glints flickering at per-pixel rates, added here at canvas resolution after the
   // scene FXAA (which smeared them to faint grain), on sunlit snow and not through a whiteout. The density follows
   // the scene alpha (snow fraction x sun visibility from the shading pass), squared; the direct sun is gated by the
   // deck / fog (uGradeP.z) and, per glint, by the drifting cloud shadow at the glint's ground point
-  vec4 g0 = G0(uv);
+  vec4 g0 = G0(uvS);
   if (g0.x < 60000.0 && uGradeP.z > 0.001) {
-    float sv = textureLod(uScene, uv, 0.0).a;
-    float sp = h12(floor(gl_FragCoord.xy) + 0.5);
+    float sv = textureLod(uScene, uvS, 0.0).a;
+    float sp = h12(floor(frag) + 0.5);
     float tw = 0.5 + 0.5 * sin(uTwinkleT * (2.0 + 5.0 * fract(sp * 13.1)) + sp * 40.0);
     float spark = step(1.0 - 0.016 * sv * sv * max(uGradeP.z, 1.0), fract(sp * 7.77)) * tw * smoothstep(2500.0, 150.0, g0.x) * uGradeP.z;
     if (spark > 0.0) {
-      float cs = cloudShadow(uCamPos + camRay(gl_FragCoord.xy) * g0.x);
+      float cs = cloudShadow(uCamPos + camRay(frag) * g0.x);
       c += uSunCol * spark * 2.6 * cs * cs;
     }
   }
-  c *= uExposure;
+${hook ? '  c = sceneComp(c, uvS, frag);                       // the scene\'s own composite step (comp@<scene>)\n' : ''}  c *= uExposure;
   c *= uGrade;                                       // white balance
   c = aces(c);
   c = mix(c, c * c * (3.0 - 2.0 * c), uGradeP.y);                              // gentle S-curve: sunlit vs shade
@@ -90,13 +100,14 @@ void main() {
   float fade = 1.0;
   if (uGb.z > 1.5) fade = smoothstep(uGb.y, uGb.y - 0.08, uv.y);
   else if (uGb.z > 0.5 && uv.y >= uGb.y && abs(gbUV(uv).x - 0.5) > 0.5) fade = 0.0;
-  c = mix(vec3(0.80, 0.85, 0.90), c, fade);
-  o = vec4(c, 1.0);
+${hook ? '  if (fade < 1.0) c = mix(sceneReveal(gl_FragCoord.xy), c, fade);   // (the scene\'s reveal backdrop)\n' : '  c = mix(vec3(0.80, 0.85, 0.90), c, fade);\n'}  o = vec4(c, 1.0);
 }`;
+  C.FS_COMP = comp(false);
+  C.FS_COMP_SCENE = comp(true);
   S.glsl.progs.fxaa = { vs: ['VS_FULL'], fs: ['FS_FXAA'] };
   S.glsl.progs.down = { vs: ['VS_FULL'], fs: ['FS_DOWN'] };
   S.glsl.progs.up = { vs: ['VS_FULL'], fs: ['FS_UP'] };
   // the composite includes COMMON + ATMOS for the sparkle's cloud shadow (camRay, cloudShadow); uRes and uSunCol
-  // come from COMMON
-  S.glsl.progs.comp = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'FS_COMP'] };
+  // come from COMMON; HAZARD for the screen shake (hazardShake, hazardComp)
+  S.glsl.progs.comp = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'HAZARD', 'FS_COMP'] };
 })(window.SNOW);

@@ -10,11 +10,15 @@
 (function (S) {
   'use strict';
   const C = S.glsl.chunks;
-  C.FS_SKY = `
+  // (stage 2b) FS_SKY_SOFT = FS_SKY plus a scene's cumulus clean-up (uCloudSoft: the house, whose clouds hang low and
+  // near, where the thin fringes of the coverage broke into a field of small specks: the billows need a thicker cell to
+  // stand out); program 'sky@house' (scenes/house.js progs.sky). FS_SKY itself (the valley's) is generated without
+  // either line: byte-identical
+  const sky = soft => `
 uniform sampler2D uPrev, uPrevD;
 uniform float uBlend, uFrame, uSteps;
 uniform float uSkyResp;      // 1 on a jump of the cloud inputs: restart the temporal accumulation this frame
-layout(location = 0) out vec4 o;    // premultiplied cloud radiance (with aerial perspective), transmittance
+${soft ? 'uniform float uCloudSoft;    // the scene\'s cumulus clean-up (atmos profile cloud.soft x uCumulus): thin cells shed their specks\n' : ''}layout(location = 0) out vec4 o;    // premultiplied cloud radiance (with aerial perspective), transmittance
 layout(location = 1) out vec4 oD;   // x: mean cloud distance (km) * cloud opacity (premultiplied so bilinear/temporal
                                     // filtering stays consistent; km keeps the >65 km far field inside half-float range)
 float cloudD(vec3 p, bool hi) {
@@ -52,7 +56,7 @@ float cloudD(vec3 p, bool hi) {
   float top = mix(0.18 + 0.82 * sqrt(shape), topC, uCumulus);
   float prof = smoothstep(0.0, mix(0.04, 0.012, uCumulus) + 0.14 * deck, h) * smoothstep(top, top * mix(0.3, 0.6, uCumulus), h);
   float d = shape * prof * (1.0 + 0.6 * uOvercast) - (1.0 - n) * mix(0.58, 0.8, uCumulus) + mix(0.06, 0.17, uCumulus);
-  // cumulus: a soft outline (x6) around a dense core (up to x2.4 inside), so the edges are wispy and the body solid
+${soft ? '  d -= uCloudSoft * (1.0 - smoothstep(0.1, 0.6, shape));   // the scene\'s cumulus clean-up\n' : ''}  // cumulus: a soft outline (x6) around a dense core (up to x2.4 inside), so the edges are wispy and the body solid
   return sat(d * mix(4.5, 6.0, uCumulus)) * (1.0 + 1.4 * uCumulus * smoothstep(0.12, 0.4, d));
 }
 // terrain distance under this half-res pixel: the farthest of its canvas texels, so at a silhouette the sky wins
@@ -115,6 +119,7 @@ void main() {
     // aerial perspective on the clouds (haze in front of the cloud only; the sky behind gets its own)
     if (tHit > 0.0) { vec4 f = fogAt(tHit, rd); acc = acc * f.a + f.rgb * (1.0 - T); }
   }
+  acc = hazardSky(acc, T, rd, tHit);      // smoke-tinted clouds (HAZARD; neutral in stage 0)
   vec4 prev = texture(uPrev, uv);
   float prevD = texture(uPrevD, uv).x;
   // cumulus accumulate a little longer (their soft volumes need more samples; the camera is fixed and they drift
@@ -124,5 +129,8 @@ void main() {
   oD = vec4(mix(prevD, max(tHit, 0.0) * 0.001 * (1.0 - T), b), 0.0, 0.0, 1.0);
 }
 `;
-  S.glsl.progs.sky = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'FS_SKY'] };
+  C.FS_SKY = sky(false);
+  C.FS_SKY_SOFT = sky(true);
+  S.glsl.progs.sky = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'HAZARD', 'FS_SKY'] };
+  S.glsl.progs['sky@house'] = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'HAZARD', 'FS_SKY_SOFT'] };
 })(window.SNOW);

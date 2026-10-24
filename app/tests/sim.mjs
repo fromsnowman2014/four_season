@@ -22,6 +22,7 @@ const ok = (cond, msg) => { console.log((cond ? 'ok   ' : 'FAIL ') + msg); if (!
 const log = (...a) => { if (!QUIET) console.log(...a); };
 const TIMING = ['fps', 'frameMs', 'buildMs', 'compileMs'];
 const STATES = ['clear', 'cumulus', 'overcast', 'fog', 'rain', 'snow', 'blizzard'];
+const ALL = [...STATES, 'thunder'];   // Phase 3 (lane Z): thunderstorms come on their own (summer / late spring)
 const SEASONS = ['spring', 'summer', 'autumn', 'winter'];
 const KEYS = ['cloudCov', 'cumulus', 'overcast', 'cirrus', 'fog', 'precip', 'gale', 'heavy', 'tempOff'];
 const PRESET = {   // the canonical preset table (the contract with lanes C / D / E)
@@ -282,8 +283,8 @@ for (const [seed, t] of [[1, 0], [7, 230], [3, 400], [11, 1000]]) {
 
 // ---- the Markov scheduler over many simulated years
 {
-  const freq = SEASONS.map(() => Object.fromEntries(STATES.map(s => [s, 0])));
-  const events = [], dwellBy = Object.fromEntries(STATES.map(s => [s, []]));
+  const freq = SEASONS.map(() => Object.fromEntries(ALL.map(s => [s, 0])));
+  const events = [], dwellBy = Object.fromEntries(ALL.map(s => [s, []]));
   const moves = {};
   let illegal = [], badTemp = [], selfT = 0;
   const YEARS = 12, SEEDS = 6;
@@ -298,11 +299,13 @@ for (const [seed, t] of [[1, 0], [7, 230], [3, 400], [11, 1000]]) {
       if (cur !== prev) {
         const k = prev + '>' + cur; moves[k] = (moves[k] || 0) + 1;
         if (cur === prev) selfT++;
-        if ((cur === 'rain' || cur === 'snow') && !['overcast', 'cumulus', 'fog'].includes(prev) && !(cur === 'snow' && prev === 'blizzard')) illegal.push(k);
+        // (a thunderstorm is a Phase-2 rain or overcast event shown as a storm: rain may follow one drawn as overcast)
+        if ((cur === 'rain' || cur === 'snow') && !['overcast', 'cumulus', 'fog', 'thunder'].includes(prev) && !(cur === 'snow' && prev === 'blizzard')) illegal.push(k);
+        if (cur === 'thunder' && !['overcast', 'cumulus', 'rain'].includes(prev)) illegal.push(k);
         if (cur === 'blizzard' && !['snow', 'overcast'].includes(prev)) illegal.push(k);
         if (cur === 'blizzard' && tempPrev >= 0) badTemp.push(`blizzard at ${tempPrev.toFixed(1)} C`);
         const tS = S.climate.s.tSeason;
-        if (cur === 'rain' && tS + 1 < 0.9) badTemp.push(`rain at tSeason ${tS.toFixed(1)}`);
+        if ((cur === 'rain' || cur === 'thunder') && tS + 1 < 0.9) badTemp.push(`${cur} at tSeason ${tS.toFixed(1)}`);
         if (cur === 'snow' && tS - 3 > 3.1) badTemp.push(`snow at tSeason ${tS.toFixed(1)}`);
         dwellBy[prev].push(t - tPrev); events.push(t - tPrev);
         prev = cur; tPrev = t;
@@ -312,16 +315,17 @@ for (const [seed, t] of [[1, 0], [7, 230], [3, 400], [11, 1000]]) {
   }
   const pct = (f, s) => { const tot = Object.values(f).reduce((a, b) => a + b, 0); return f[s] / tot; };
   log(`   weather time share by season (${SEEDS} seeds x ${YEARS} years, unpinned, speed 8):`);
-  log('   ' + pad('', 8) + STATES.map(s => pad(s, 9)).join(''));
-  SEASONS.forEach((n, i) => log('   ' + pad(n, 8) + STATES.map(s => pad((100 * pct(freq[i], s)).toFixed(1) + '%', 9)).join('')));
+  log('   ' + pad('', 8) + ALL.map(s => pad(s, 9)).join(''));
+  SEASONS.forEach((n, i) => log('   ' + pad(n, 8) + ALL.map(s => pad((100 * pct(freq[i], s)).toFixed(1) + '%', 9)).join('')));
   const mean = a => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
-  log('   mean time between changes (climate-s): ' + STATES.map(s => `${s} ${mean(dwellBy[s]).toFixed(0)} (n ${dwellBy[s].length})`).join(', '));
+  log('   mean time between changes (climate-s): ' + ALL.map(s => `${s} ${mean(dwellBy[s]).toFixed(0)} (n ${dwellBy[s].length})`).join(', '));
   log('   transitions: ' + Object.entries(moves).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
   const [sp, su, au, wi] = freq;
   ok(!illegal.length && !selfT, 'structure: rain / snow begin only out of overcast / cumulus / fog (a blizzard may ease to snow), blizzard only out of snow / overcast, no self transitions' + (illegal.length ? ': ' + [...new Set(illegal)].join(' ') : ''));
   ok(!badTemp.length, 'temperature rules: no rain below 1 C, no snow above 3 C, blizzard only below 0 C' + (badTemp.length ? ': ' + badTemp.slice(0, 5).join(', ') : ''));
   ok(pct(wi, 'snow') + pct(wi, 'blizzard') > 0.35 && pct(wi, 'rain') < 0.03 && pct(wi, 'blizzard') > 0.03, `winter is snowy (snow ${(100 * pct(wi, 'snow')).toFixed(0)}%, blizzard ${(100 * pct(wi, 'blizzard')).toFixed(0)}%)`);
-  ok(pct(su, 'clear') + pct(su, 'cumulus') > 0.55 && pct(su, 'rain') > 0.06 && pct(su, 'snow') === 0 && pct(su, 'blizzard') === 0, `summer is sunny and cumulus with some rain (clear+cumulus ${(100 * (pct(su, 'clear') + pct(su, 'cumulus'))).toFixed(0)}%, rain ${(100 * pct(su, 'rain')).toFixed(0)}%)`);
+  ok(pct(su, 'clear') + pct(su, 'cumulus') > 0.55 && pct(su, 'rain') + pct(su, 'thunder') > 0.06 && pct(su, 'thunder') > 0.02 && pct(su, 'snow') === 0 && pct(su, 'blizzard') === 0 && pct(wi, 'thunder') === 0,
+    `summer is sunny and cumulus with some rain and thunderstorms (clear+cumulus ${(100 * (pct(su, 'clear') + pct(su, 'cumulus'))).toFixed(0)}%, rain ${(100 * pct(su, 'rain')).toFixed(0)}%, thunder ${(100 * pct(su, 'thunder')).toFixed(0)}%)`);
   ok(pct(au, 'fog') > 0.12 && pct(au, 'rain') > 0.1, `autumn has fog and rain (fog ${(100 * pct(au, 'fog')).toFixed(0)}%, rain ${(100 * pct(au, 'rain')).toFixed(0)}%)`);
   ok(STATES.filter(s => pct(sp, s) > 0.04).length >= 6 && Math.max(...STATES.map(s => pct(sp, s))) < 0.3, 'spring is mixed (6+ states above 4%, none above 30%)');
   const md = mean(events);

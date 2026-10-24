@@ -11,9 +11,11 @@
 //  - touch: a one-finger drag steers the wind along the re-framed camR, a second finger is ignored, lifting it
 //    (pointerup / pointercancel / lostpointercapture) ends the drag, the steer decays; a buttonless mouse sweep does
 //    nothing; no page pan / zoom over the scene (touch-action), no overscroll
-//  - chrome: the pop-over fits a 390x844 portrait and an 844x390 landscape phone without scrolling, finger-sized
-//    targets (icon >= 44 px, season chips >= 36, weather >= 44, sliders >= 32), the hint hides when it opens; on a
-//    desktop the pop-over keeps its exact geometry
+//  - chrome (Phase 3: the place cards, the 5 x 2 weather grid, the hazard row): the pop-over fits a 390x844 portrait,
+//    a 390x664 portrait (Safari's bars showing) and an 844x390 landscape phone without scrolling, over the valley and
+//    over the house, its status line unclipped even for the longest place / season / transition; finger-sized targets
+//    (icon >= 44 px, place cards >= 44, season chips >= 36, weather >= 44, hazards >= 44, the switch >= 36, sliders
+//    >= 32), the hint hides when it opens; on a desktop the pop-over keeps its exact geometry
 //  - desktop parity: at 1920x1080 the camera vectors equal the Phase-1 constants bit for bit
 //  - the quality ladder (node, js/perf.js on a modelled 60 Hz display, vsync-locked and pipelined, 10-70 ms GPU
 //    frames): it settles (bounded rung changes, none late), a 30 fps cap costs one probe, 120 Hz is left alone
@@ -120,8 +122,10 @@ await session({ tag: 'desktop', w: 1920, h: 1080 }, async p => {
   ok(JSON.stringify(s.buf) === JSON.stringify([1920, 1080]) && s.hint === '드래그하여 바람을 일으켜 보세요', 'desktop buffer 1920x1080, mouse hint', [s.buf, s.hint]);
   const g = JSON.parse(await p.evaluate(`(async () => { document.getElementById('icon').click(); ${SETTLED}
     const r = e => { const b = e.getBoundingClientRect(); return [b.right, b.bottom, b.width, b.height].map(Math.round); }, pop = document.getElementById('pop');
-    return JSON.stringify({ pop: r(pop), seg: r(pop.querySelector('.seg button'))[3], wx: r(pop.querySelector('.wx button'))[3], range: r(pop.querySelector('input[type=range]'))[3], icon: r(document.getElementById('icon')) }); })()`));
-  ok(JSON.stringify(g) === JSON.stringify({ pop: [1898, 1018, 272, 387], seg: 26, wx: 50, range: 14, icon: [1906, 1068, 44, 44] }), 'desktop pop-over geometry unchanged (272x387 at 22 / 62 px, chips 26, sliders 14)', g);
+    return JSON.stringify({ pop: r(pop), place: r(pop.querySelector('.places button'))[3], seg: r(pop.querySelector('.seg button'))[3], wx: r(pop.querySelector('.wx [data-v=clear]'))[3],
+      hz: r(pop.querySelector('.hz button'))[3], range: r(pop.querySelector('input[type=range]'))[3], icon: r(document.getElementById('icon')) }); })()`));
+  ok(JSON.stringify(g) === JSON.stringify({ pop: [1898, 1018, 272, 545], place: 42, seg: 26, wx: 50, hz: 34, range: 14, icon: [1906, 1068, 44, 44] }),
+    'desktop pop-over geometry (272x545 at 22 / 62 px; place cards 42, chips 26, weather 50, hazards 34, sliders 14)', g);
 });
 
 // ---- 4. devices: sizing, framing, hint
@@ -226,24 +230,33 @@ await session({ tag: 'touch', w: 390, h: 844, dpr: 3, mobile: true }, async p =>
   ok(r.cancelEnds && r.lostEnds, 'pointercancel / lostpointercapture end the drag');
 });
 
-// ---- 8. the pop-over on a phone, both orientations
-for (const [w, h] of [[390, 844], [844, 390]]) {
-  await session({ tag: `pop ${w}x${h}`, w, h, dpr: 3, mobile: true }, async p => {
+// ---- 8. the pop-over on a phone, both orientations (and a portrait with Safari's bars), over both places
+for (const [w, h, scene] of [[390, 844, 'valley'], [390, 844, 'house'], [390, 664, 'valley'], [390, 664, 'house'], [844, 390, 'valley'], [844, 390, 'house']]) {
+  await session({ tag: `pop ${w}x${h} ${scene}`, w, h, dpr: 3, mobile: true, q: `scene=${scene}` }, async p => {
     await p.evaluate(READY);
-    await sleep(700);   // the hint is up
+    // the hint is up (it fades in 0.5 s of the animation's wall clock after ready, which a stalled frame or two can push
+    // past a fixed real-time wait: polish, a flake at 844x390; wait for it, up to 3 s)
+    await p.evaluate(`new Promise(r => { const t0 = performance.now(), f = () => { const h = document.getElementById('hint'); h && h.classList.contains('on') || performance.now() - t0 > 3000 ? r(1) : setTimeout(f, 25); }; f(); })`);
     const r = JSON.parse(await p.evaluate(`(async () => { const $ = id => document.getElementById(id), pop = $('pop'), icon = $('icon');
       const hintBefore = !!$('hint') && $('hint').classList.contains('on');
       icon.click(); ${SETTLED}
       const b = pop.getBoundingClientRect(), all = [...pop.querySelectorAll('*')].map(e => e.getBoundingClientRect()).filter(q => q.width > 0);
       const minH = sel => Math.min(...[...pop.querySelectorAll(sel)].map(e => e.getBoundingClientRect().height)), ib = icon.getBoundingClientRect();
+      // the longest status line: the longer place name, a three-syllable season, a transition between two-syllable states
+      const stt = pop.querySelector('.status'), longest = () => { $('stPlace').textContent = '알프스 계곡'; $('stSeason').textContent = '늦겨울'; $('stWx').textContent = '흐림 → 폭설'; };
+      longest(); const statusFits = [...stt.children].every(e => e.getBoundingClientRect().right <= stt.getBoundingClientRect().right + 0.5) && stt.scrollWidth <= stt.clientWidth;
+      SNOW.ui.txt.clear(); SNOW.syncUI();   // the real status again (setText caches what it wrote)
       return JSON.stringify({ rect: [b.left, b.top, b.right, b.bottom].map(Math.round), inside: b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight,
         children: all.every(q => q.left >= b.left - 0.5 && q.right <= b.right + 0.5 && q.top >= b.top - 0.5 && q.bottom <= b.bottom + 0.5 || q.height <= 1),
-        scroll: pop.scrollHeight - pop.clientHeight, overIcon: !(b.right <= ib.left || b.bottom <= ib.top), icon: [ib.width, ib.height],
-        seg: minH('.seg button'), wx: minH('.wx button'), range: minH('input[type=range]'), hintBefore, hintAfter: !!$('hint') && $('hint').classList.contains('on') }); })()`));
-    ok(r.inside && r.children && r.scroll <= 0 && !r.overIcon, `pop-over ${w}x${h}: fits the screen, nothing scrolls, the icon stays free`, { rect: r.rect, scroll: r.scroll });
-    ok(r.icon[0] >= 44 && r.icon[1] >= 44 && r.seg >= 36 && r.wx >= 44 && r.range >= 32, `pop-over ${w}x${h}: finger-sized targets`, { icon: r.icon, seg: r.seg, wx: r.wx, range: r.range });
-    ok(r.hintBefore && !r.hintAfter, `pop-over ${w}x${h}: the hint hides when it opens`);
-    if (OUT) await p.shot(path.join(OUT, `pop-${w}x${h}.png`));
+        scroll: pop.scrollHeight - pop.clientHeight, overIcon: !(b.right <= ib.left || b.bottom <= ib.top), icon: [ib.width, ib.height], statusFits,
+        place: minH('.places button'), seg: minH('.seg button'), wx: minH('.wx button'), hz: minH('.hz button'), sw: minH('#hzAuto'), range: minH('input[type=range]'),
+        checked: pop.querySelector('#places [aria-checked=true]').dataset.v, hintBefore, hintAfter: !!$('hint') && $('hint').classList.contains('on') }); })()`));
+    const tag = `pop-over ${w}x${h} over the ${scene}`;
+    ok(r.inside && r.children && r.scroll <= 0 && !r.overIcon && r.statusFits && r.checked === scene, `${tag}: fits the screen, nothing scrolls, the icon stays free, the status line unclipped`, { rect: r.rect, scroll: r.scroll });
+    ok(r.icon[0] >= 44 && r.icon[1] >= 44 && r.place >= 44 && r.seg >= 36 && r.wx >= 44 && r.hz >= 44 && r.sw >= 36 && r.range >= 32, `${tag}: finger-sized targets`,
+      { icon: r.icon, place: r.place, seg: r.seg, wx: r.wx, hz: r.hz, sw: r.sw, range: r.range });
+    ok(r.hintBefore && !r.hintAfter, `${tag}: the hint hides when it opens`, { before: r.hintBefore, after: r.hintAfter });
+    if (OUT) await p.shot(path.join(OUT, `pop-${w}x${h}-${scene}.png`));
   });
 }
 

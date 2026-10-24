@@ -1,5 +1,5 @@
 // =====================================================================================
-//  derive/precip.js (stage-1 owner: lane E) — precipitation: the sim state -> S.F (rates, curtain, wet snow, the
+//  derive/precip.js (stage-1 owner: lane E; Phase 3: lane Z) — precipitation: the sim state -> S.F (rates, curtain, wet snow, the
 //  distant veils and rain curtains, the flake / rain shutters, fall factors, wind and clocks), and the
 //  precipitation clocks. Pure JS (no GL, no DOM). Reads S.weather.s (ch.precip, ch.snowFrac, ch.heavy, ch.gale,
 //  temp, curtain, white, tail) and S.wind.s; the counts (precip.js) scale the rates with S.amountMul().
@@ -9,6 +9,8 @@
 //                  S.anim.fallI  snow fall integral (fall factor kS; uFallV = kS = d fallI / dt)
 //                  S.anim.tumI   tumble integral (uTumT, wrapped by TW = 120)
 //                  S.anim.rainI  rain fall integral (fall factor kR; uRainV = kR = d rainI / dt)
+//                  S.anim.ashI, emberI  the wildfire ash / ember fall integrals (factor 1: their speed ranges are in
+//                  the layer descriptors, embers' negative: they rise)
 //                  S.anim.veilI[4] snow veil scroll, veilR[4] rain veil scroll, gustR[2] rain gust bands: wrapped by the
 //                  256 noise period; like Phase 1's veil they hold during fastForward
 //                  The wet-snow factor is slewed in physical time (tau 4 s): it scales non-integrated amplitudes
@@ -19,7 +21,7 @@
 // =====================================================================================
 (function (S) {
   'use strict';
-  const { lerp, smooth, camR } = S;
+  const { lerp, smooth, camR, worldR } = S;
   const veilDir = new Float32Array(2), veilT = new Float32Array(4);
   const rainDir = new Float32Array(2), rainT = new Float32Array(4), rainShaft = new Float32Array(4), rainGust = new Float32Array(2);
   // wet snow (big heavy aggregates) from the meadow temperature: only in the thaw band above the freezing point,
@@ -40,7 +42,7 @@
   S.derive.precip = {
     init() {
       const a = S.anim, wx = S.weather.s;
-      a.fallI = 0; a.tumI = 0; a.rainI = 0; a.veilI = [0, 0, 0, 0]; a.veilR = [0, 0, 0, 0]; a.gustR = [0, 0];
+      a.fallI = 0; a.tumI = 0; a.rainI = 0; a.ashI = 0; a.emberI = 0; a.veilI = [0, 0, 0, 0]; a.veilR = [0, 0, 0, 0]; a.gustR = [0, 0];
       st.wet = wetOf(wx.temp); st.kS = snowK(wx.curtain, st.wet); st.kR = rainK(rainRate(wx.ch));
     },
     step(dt, ff) {
@@ -51,8 +53,11 @@
       a.fallI += st.kS * dt;
       a.tumI += (1 + 0.8 * c) * (1 - 0.5 * st.wet) * dt;
       a.rainI += st.kR * dt;
+      a.ashI += dt; a.emberI += dt;
       if (ff) return;
-      const w = S.wind.s.windA, wl = w[0] * camR[0] + w[2] * camR[2];
+      // (the scroll integrals take the lateral wind in the world's reference frame, S.worldR: the valley's camera, so
+      // they never depend on the scene shown; frame() below uses the live camera for the directions on screen)
+      const w = S.wind.s.windA, wl = w[0] * worldR[0] + w[2] * worldR[2];
       const vdx = wl / (1.2 + 1.5 * c), vl = Math.hypot(vdx, 1);             // apparent fall direction of the distant veil
       const vI = a.veilI;
       vI[0] = (vI[0] + (2.2 + 4.0 * c) * dt) % 256; vI[1] = (vI[1] + (1.4 + 2.6 * c) * dt) % 256;

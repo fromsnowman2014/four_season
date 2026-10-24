@@ -10,6 +10,11 @@
 //  - weather chips (a pick -> weather.manual, 자동 -> scheduler), season chips (pin, thumb, the glyph after the 60 s
 //    ease, 자동 unpins), arrow keys in the radiogroup, the speed slider and its caption (8x: '1년 = 2분 30초'),
 //    the amount slider, API -> chrome sync
+//  - Phase 3: the place cards (labels from S.scenes, a pick switches through setScene, the glass stays open with the
+//    checked card busy until state().ready, the status line names the place), the 뇌우 chip, the weather grid's ↑ / ↓,
+//    the hazard buttons (trigger, a glow while the event runs) and the 가끔 자동으로 switch (snowSim.hazardsAuto, both
+//    ways), the ← / → place keys (only with the glass closed, never from a text / radio / slider control, not with a
+//    modifier or a repeat; the radiogroup's own arrows switch once; a toast names the place)
 //  - pointer: a buttonless sweep leaves the steer, the drag velocity and the wake at exactly 0 on every event; a press
 //    that only closes the pop-over starts no drag; a right press starts nothing; a left drag (PointerEvents with
 //    buttons 1) steers the wind, lays wake segments and shows the grabbing cursor; release ends it and the steer decays
@@ -29,7 +34,10 @@ const SCRIPT = `(async () => {
   const pe = (type, x, y, buttons, extra) => c.dispatchEvent(new PointerEvent(type, Object.assign({ bubbles: true, cancelable: true, composed: true,
     pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons, clientX: x, clientY: y }, extra || {})));
   const sync = () => wait(250);          // updateUI re-syncs the open pop-over every 6 frames
-  const API = ['state', 'advance', 'setSeason', 'speed', 'setWeather', 'setStorm', 'triggerBlizzard', 'amount', 'auto', 'setCoverage', 'reset', 'resetSnow'];
+  const API = ['state', 'advance', 'setSeason', 'speed', 'setWeather', 'setStorm', 'triggerBlizzard', 'amount', 'auto', 'setCoverage', 'reset', 'resetSnow',
+    'setScene', 'scene', 'trigger', 'hazardsAuto'];
+  const key = (el, k, o) => el.dispatchEvent(new KeyboardEvent('keydown', Object.assign({ key: k, bubbles: true, cancelable: true }, o || {})));
+  const waitReady = async () => { for (let i = 0; i < 1200 && !st().ready; i++) await wait(25); return st().ready; };   // a valley rebake on a loaded GPU can take seconds
   out.api = API.filter(k => !(k in snowSim)).join(',') || 'complete';
   for (let i = 0; i < 200 && !st().ready; i++) await wait(50);
   await wait(700);
@@ -77,6 +85,53 @@ const SCRIPT = `(async () => {
   snowSim.setWeather('fog'); await sync();
   out.wxApi = chk('weathers', 'fog') && $('stWx').textContent.endsWith('안개');
   snowSim.setWeather('auto'); await sync();
+  // ---- Phase 3: places (the glass stays open through a switch; the checked card is busy until ready)
+  const pl = v => document.querySelector('#places [data-v=' + v + ']');
+  out.placeCards = [...document.querySelectorAll('#places [role=radio]')].map(b => b.dataset.v + ':' + b.textContent.trim()).join(',') + ' ' + chk('places', 'valley')
+    + ' ' + $('stPlace').textContent;
+  pl('house').click();
+  out.placeBusy = snowSim.scene === 'house' && chk('places', 'house') && !st().ready && pl('house').classList.contains('busy')
+    && $('places').getAttribute('aria-busy') === 'true' && getComputedStyle(pl('house'), '::after').animationName === 'sheen';
+  const t0 = performance.now(); await waitReady(); await sync();
+  out.placeReady = st().ready && !pl('house').classList.contains('busy') && pop.classList.contains('open') && $('stPlace').textContent === '우리 집';
+  // ---- thunder chip; the weather grid's up / down (자동 is one tall cell, the states two rows of four)
+  document.querySelector('#weathers [data-v=thunder]').click(); await sync();
+  out.thunder = st().weather.manual === 'thunder' && chk('weathers', 'thunder') && $('stWx').textContent.endsWith('뇌우');
+  const wb = v => document.querySelector('#weathers [data-v=' + v + ']');
+  wb('thunder').focus(); key(wb('thunder'), 'ArrowUp'); const up = document.activeElement.dataset.v;
+  key(document.activeElement, 'ArrowDown'); const down = document.activeElement.dataset.v;
+  wb('auto').focus(); key(wb('auto'), 'ArrowDown'); out.wxVert = up + ' ' + down + ' ' + document.activeElement.dataset.v;
+  snowSim.setWeather('auto'); await sync();
+  // ---- hazards: momentary buttons that glow while their event runs; the switch
+  const hb = k => document.querySelector('#hazards [data-k=' + k + ']');
+  hb('quake').click();
+  out.quake = hb('quake').classList.contains('on') && !hb('wildfire').classList.contains('on') && SNOW.events.s.quakeT >= 0;
+  snowSim.advance(5); await sync(); const qPeak = st().hazards.quake;
+  snowSim.advance(11); await sync();
+  out.quakeEnds = qPeak > 0.3 && st().hazards.quake === 0 && !hb('quake').classList.contains('on');
+  hb('wildfire').click(); snowSim.advance(30); await sync();
+  out.fire = hb('wildfire').classList.contains('on') && st().hazards.smoke > 0.9;
+  snowSim.advance(151); await sync(); out.fireEnds = st().hazards.smoke === 0 && !hb('wildfire').classList.contains('on');
+  const sw = $('hzAuto'); out.autoOff = snowSim.hazardsAuto === false && sw.getAttribute('aria-checked') === 'false';
+  sw.click(); out.autoOn = snowSim.hazardsAuto === true && st().hazards.auto === true && sw.getAttribute('aria-checked') === 'true';
+  snowSim.hazardsAuto = false; out.autoApi = sw.getAttribute('aria-checked') === 'false';
+  // ---- the ← / → place keys: nothing while the glass is open (the radiogroup's own arrows switch exactly once)
+  key(window, 'ArrowRight'); out.keyOpenNothing = snowSim.scene === 'house';
+  pl('house').focus(); key(pl('house'), 'ArrowRight'); out.radioArrowOnce = snowSim.scene === 'valley' && document.activeElement === pl('valley') && chk('places', 'valley');
+  await waitReady();
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); await sync();
+  // closed, focus on the icon or the page: → / ← switch (wrapping) and the toast names the place
+  icon.focus(); key(icon, 'ArrowRight');
+  const toast = $('toast');
+  out.keySwitch = snowSim.scene === 'house' && !pop.classList.contains('open') && toast.classList.contains('on') && toast.textContent === '우리 집';
+  await waitReady(); key(document.body, 'ArrowLeft'); out.keyBack = snowSim.scene === 'valley' && toast.textContent === '알프스 계곡';
+  await waitReady();
+  // not from a text / radio / slider control, nor with a modifier, nor a held key
+  const probe = (html, role) => { const e = document.createElement(html); if (role) e.setAttribute('role', role); e.tabIndex = 0; document.body.appendChild(e); e.focus(); key(e, 'ArrowRight'); e.remove(); return snowSim.scene; };
+  out.keyGuards = [probe('input'), probe('textarea'), probe('div', 'radio'), probe('div', 'slider'), (key(document.body, 'ArrowRight', { shiftKey: true }), snowSim.scene),
+    (key(document.body, 'ArrowRight', { metaKey: true }), snowSim.scene), (key(document.body, 'ArrowRight', { repeat: true }), snowSim.scene)].join(',');
+  await wait(1900); out.toastGone = !toast.classList.contains('on');
+  icon.click(); await sync();
   // ---- keyboard
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); out.escCloses = !pop.classList.contains('open');
   icon.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); await sync();
@@ -111,6 +166,7 @@ const SCRIPT = `(async () => {
   await wait(2000); out.decays = st().wind.steer < s0 && st().wind.steer > 0;
   // ---- idle dimming (4 s without pointer movement), then the 6 s auto-close of an untouched pop-over
   await wait(4300); out.idle = icon.classList.contains('idle');
+  await waitReady();   // (a still-baking place keeps the glass open by design)
   icon.click(); await wait(3000); out.autoCloseNotYet = pop.classList.contains('open');
   await wait(3700); out.autoClosed = !pop.classList.contains('open');
   out.hintGone = $('hint') === null;
@@ -126,6 +182,10 @@ const EXPECT = {
   escCloses: true, enterFocus: true, arrowPicks: true, escFocusIcon: true,
   closeNoDrag: true, rightNoDrag: true, hoverNothing: true, dragOn: true, dragSteers: true, release: true, decays: true,
   idle: true, autoCloseNotYet: true, autoClosed: true, hintGone: true,
+  placeCards: 'valley:알프스 계곡,house:우리 집 true 알프스 계곡', placeBusy: true, placeReady: true, thunder: true, wxVert: 'cumulus thunder auto',
+  quake: true, quakeEnds: true, fire: true, fireEnds: true, autoOff: true, autoOn: true, autoApi: true,
+  keyOpenNothing: true, radioArrowOnce: true, keySwitch: true, keyBack: true,
+  keyGuards: 'valley,valley,valley,valley,valley,valley,valley', toastGone: true,
 };
 
 let fails = 0;
@@ -137,10 +197,11 @@ for (const k of Object.keys(EXPECT)) {
   console.log(`${same ? 'ok  ' : 'FAIL'} ${k.padEnd(16)} ${JSON.stringify(out[k])}${same ? '' : '   expected ' + JSON.stringify(EXPECT[k])}`);
 }
 for (const e of r.errors) { console.log('     ' + e); fails++; }
-// ?ui=0: no chrome at all (the icon, the pop-over, the hint and the sprite are removed), the API still works
+// ?ui=0: no chrome at all (the icon, the pop-over, the hint, the toast and the sprite are removed), no place keys, the
+// API still works
 const r0 = await capture({ html: APP, q: 'seed=7&ui=0', wait: 1500,
-  eval: "JSON.stringify([['icon', 'pop', 'hint'].filter(id => document.getElementById(id)).length, document.querySelectorAll('.sprite').length, typeof snowSim.setWeather])" });
-const ok0 = r0.value === '[0,0,"function"]' && !r0.errors.length;
+  eval: "(window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })), JSON.stringify([['icon', 'pop', 'hint', 'toast'].filter(id => document.getElementById(id)).length, document.querySelectorAll('.sprite').length, typeof snowSim.setWeather, typeof snowSim.setScene, snowSim.scene]))" });
+const ok0 = r0.value === '[0,0,"function","function","valley"]' && !r0.errors.length;
 if (!ok0) fails++;
 console.log(`${ok0 ? 'ok  ' : 'FAIL'} ?ui=0 removes the chrome  ${r0.value}`);
 for (const e of r0.errors) console.log('     ' + e);

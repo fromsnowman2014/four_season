@@ -10,12 +10,42 @@
 // Prints console errors / warnings / exceptions; the result object holds them, plus fps and the --eval value.
 // o.deadline (ms, default 300000): a watchdog on every DevTools call; a page that stops answering is reported as an
 // error ('harness: ...') with timedOut set, instead of hanging the run.
+// The page: a file path (opened as file://) or a URL (http(s):// or file://).
+// Isolation (polish): each Chrome gets a fresh profile and picks a free debugging port itself
+// (--remote-debugging-port=0); the port and the browser target's path are read from <profile>/DevToolsActivePort, and
+// /json/version must name that same browser target before any page is touched. A fixed or random port could land on a
+// Chrome that is already listening there (a parallel run's), whose page the session would then navigate. Every Chrome
+// this process started is killed when it exits (normally, by an uncaught error or by SIGINT / SIGTERM / SIGHUP).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs'; import os from 'node:os'; import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const live = new Set();                               // the Chromes this process started and has not closed yet
+const killAll = () => { for (const c of live) { try { c.kill('SIGKILL'); } catch {} } live.clear(); };
+process.on('exit', killAll);
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, () => { killAll(); process.exit(130); });
+// launch Chrome on a fresh profile; resolves { ch, port } once its own DevTools endpoint answers
+async function launch(prof, args) {
+  const ch = spawn(CHROME, ['--headless=new', '--remote-debugging-port=0', `--user-data-dir=${prof}`, ...args], { stdio: 'ignore' });
+  live.add(ch); ch.once('exit', () => live.delete(ch));
+  const file = path.join(prof, 'DevToolsActivePort');
+  for (let i = 0; i < 300; i++) {                     // ~30 s: Chrome can be slow to start on a loaded machine
+    await sleep(100);
+    if (ch.exitCode !== null) break;
+    let port = 0, browser = '';
+    try { const l = fs.readFileSync(file, 'utf8').split('\n'); port = +l[0]; browser = (l[1] || '').trim(); } catch { continue; }
+    if (!(port > 0) || !browser.startsWith('/devtools/browser/')) continue;   // (not written completely yet)
+    try {
+      const v = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+      if (!String(v.webSocketDebuggerUrl || '').endsWith(browser)) throw new Error(`port ${port} answers for another Chrome`);
+      return { ch, port };
+    } catch (e) { if (/another Chrome/.test(e.message)) { ch.kill('SIGKILL'); throw e; } }
+  }
+  try { ch.kill('SIGKILL'); } catch {}
+  throw new Error('no Chrome DevTools endpoint (DevToolsActivePort)');
+}
 
 // open(o): a live page session (Chrome launched, the page navigated, console errors collected) for scripted tests:
 //   const p = await open({ html, q, w, h, dpr });  await p.evaluate(js);  await p.shot(file);  await p.resize(w, h);
@@ -25,17 +55,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // Every CDP call is guarded by o.deadline (ms, default 300000) per call, so a page that stops answering fails loudly.
 export async function open(o) {
   const W = o.w || 1600, H = o.h || 900, DPR = o.dpr || 1, LIMIT = o.deadline || 300000;
-  const port = 9300 + Math.floor(Math.random() * 600);
   const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-'));
-  const ch = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, '--disable-gpu-sandbox',
-    '--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=metal', '--hide-scrollbars', `--window-size=${W},${H}`,
-    '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
-    '--disable-features=CalculateNativeWinOcclusion', '--enable-gpu-rasterization', '--disable-gpu-vsync', '--disable-frame-rate-limit',
-    '--enable-precise-memory-info', 'about:blank'], { stdio: 'ignore' });
   const errors = [];
-  let ws = null;
-  const close = async () => { try { ws && ws.close(); } catch {} try { ch.kill('SIGKILL'); } catch {} await sleep(100); try { fs.rmSync(prof, { recursive: true, force: true }); } catch {} };
+  let ws = null, ch = null, port = 0;
+  const close = async () => { try { ws && ws.close(); } catch {} try { ch && ch.kill('SIGKILL'); } catch {} await sleep(100); try { fs.rmSync(prof, { recursive: true, force: true }); } catch {} };
   try {
+    ({ ch, port } = await launch(prof, ['--disable-gpu-sandbox',
+      '--enable-webgl', '--ignore-gpu-blocklist', '--use-angle=metal', '--hide-scrollbars', `--window-size=${W},${H}`,
+      '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
+      '--disable-features=CalculateNativeWinOcclusion', '--enable-gpu-rasterization', '--disable-gpu-vsync', '--disable-frame-rate-limit',
+      '--enable-precise-memory-info', 'about:blank']));
     let tgt;
     for (let i = 0; i < 100 && !tgt; i++) { await sleep(150); try { const l = await (await fetch(`http://127.0.0.1:${port}/json`)).json(); tgt = l.find(t => t.type === 'page'); } catch {} }
     if (!tgt) throw new Error('no Chrome target');
@@ -65,7 +94,8 @@ export async function open(o) {
       await send('Emulation.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/130.0 Mobile/15E148 Safari/604.1' });
     }
     if (o.preload) await send('Page.addScriptToEvaluateOnNewDocument', { source: o.preload });
-    await send('Page.navigate', { url: pathToFileURL(path.resolve(o.html)).href + (o.q ? '?' + o.q : '') });
+    const url = /^(https?|file):/.test(o.html) ? o.html : pathToFileURL(path.resolve(o.html)).href;
+    await send('Page.navigate', { url: url + (o.q ? '?' + o.q : '') });
   } catch (e) { await close(); throw e; }
   return {
     errors, send, evaluate, close,

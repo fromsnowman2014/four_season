@@ -16,7 +16,9 @@
 //                  Clouds and their ground shadows move WITH the wind: the shaders sample q = p.xz + uCloudOff, so the
 //                  offset integrates minus the cloud velocity.
 //    frame(F)      runs last of the three derive frames (after surface and precip), so it may read F.uCover / F.uWet
-//                  and F.uSnowCurtain:
+//                  and F.uSnowCurtain (then the scene's derive and derive/events.js may adjust what it set). The
+//                  scene-specific numbers (exposure cover keys, the mist / fog-sea profile, the cloud cuts of the
+//                  composition) come from S.scene.atmos (js/scenes/*.js):
 //                  uSunCol uSkyAmb uSkyZen uSkyHor uFogCol uFogP uCloudOff uCloudCov uOvercast uCumulus uFogDay uMistP
 //                  uCirrus uShadowAmp uExposure uBloomStr, and lane C's own: uHorBand uCloudP uCloudQ uMistQ, uSkyResp
 //                  (sky pass), uGrade / uGradeP (composite)
@@ -98,8 +100,9 @@
       // (derive/surface.js coverAt = SURFACE's effectiveCover without its per-pixel shift; surface.frame ran first) at
       // the meadow (visCover, most of the frame), the slopes (~800 m) and the summits (~2000 m). With the neutral
       // snowline this is uCover itself (Phase 1)
-      const surf = S.derive.surface;
-      const cover = 0.7 * surf.visCover + 0.2 * surf.coverAt(800) + 0.1 * surf.coverAt(2000);
+      // (the scene's keys: scene.atmos.coverMix / coverAlt; the valley's are .7 meadow, .2 at 800 m, .1 at 2000 m)
+      const surf = S.derive.surface, A = S.scene.atmos, M = A.mist, CL = A.cloud;
+      const cover = A.coverMix[0] * surf.visCover + A.coverMix[1] * surf.coverAt(A.coverAlt[0]) + A.coverMix[2] * surf.coverAt(A.coverAlt[1]);
       const precip = ch.precip, snowFrac = ch.snowFrac;
       const snowFall = precip * snowFrac, rain = precip * (1 - snowFrac);
       // the deck's light response starts at overcast .15: thin cloud (the snow preset's .35) is broken sun, not grey;
@@ -163,19 +166,20 @@
       // calm: no snow falling and no fog sea (dry or rainy days): the valley mist stays an even haze there too
       const calm = (1 - smooth(0, 0.3, snowFall)) * (1 - fs);
       const mist = sMix1(SEASON.mist, sw) * (1 + 4.7 * smooth(0, 0.6, snowFall) * od) * (1 + 2 * ch.fog * (1 - 0.6 * rk)) * (1 - Math.max(0.6 * crisp, 0.45 * calm));
-      lighting.fogP[3] = mist * Math.pow(180 * mist, -fs);   // geometric blend mist -> 1/180: the sea rises / drains smoothly
+      lighting.fogP[3] = mist * Math.pow(M.fogInv * mist, -fs);   // geometric blend mist -> 1/fogInv (valley 1/180): the sea rises / drains smoothly
       const even = Math.max(crisp, 0.8 * calm);
-      mistP[0] = lerp(650, 72, fs);           // reference level depth (level -x m)
+      // (the levels, scales and bank terms of the scene's mist profile, scene.atmos.mist; the valley's in the comments)
+      mistP[0] = lerp(M.level[0], M.level[1], fs);           // reference level depth (level -x m): 650 -> 72
       // scale height (m): on calm days a deeper, even layer (a valley haze over the whole valley, not a dense film
       // pooled on the valley floor, which glowed as one bright spot under a grey sky)
-      mistP[1] = lerp(lerp(260, 560, even), 12, fs);
+      mistP[1] = lerp(lerp(M.scale[0], M.scale[1], even), M.scale[2], fs);           // 260, 560, 12
       // (stage 2b: fair weather keeps the mist an even valley haze: a dense bank at the valley floor ~5 km out read as
       // a lone glowing blob)
-      mistP[2] = lerp(lerp(0.3, 0.55, even), 0.8, fs);        // bank floor
-      mistP[3] = lerp(lerp(1.3, 0.35, even), 0.45, fs);       // bank gain
-      mistQ[0] = 20 * fs;                     // fog-sea top swell (m, +-), drifting with half the cloud wind
-      mistQ[1] = 0.22 * fs;                   // sun glow of the fog-sea top (x sun visibility)
-      mistQ[2] = fs;                          // fog-sea weight (soft far shoreline, sea texture, haze in front)
+      mistP[2] = lerp(lerp(M.floor[0], M.floor[1], even), M.floor[2], fs);        // bank floor .3, .55, .8
+      mistP[3] = lerp(lerp(M.gain[0], M.gain[1], even), M.gain[2], fs);           // bank gain 1.3, .35, .45
+      mistQ[0] = M.swell * fs;                // fog-sea top swell (m, +-; valley 20), drifting with half the cloud wind
+      mistQ[1] = M.glow * fs;                 // sun glow of the fog-sea top (x sun visibility; valley .22)
+      mistQ[2] = fs * M.sea;                  // fog-sea weight (soft far shoreline, sea texture, haze in front; valley: fs)
       mistQ[3] = 0;
       F.uMistP = mistP; F.uMistQ = mistQ;
       F.uSunCol = lighting.sun; F.uSkyAmb = lighting.amb; F.uSkyZen = lighting.zen; F.uSkyHor = lighting.hor; F.uFogCol = lighting.fog;
@@ -195,16 +199,17 @@
       // blizzard keeps the Phase-1 storm sky
       const deck = smooth(0.3, 0.9, ch.overcast) * (1 - smooth(0, 0.3, F.uSnowCurtain));
       const near = Math.max(cum, deck);
-      cloudP[0] = lerp(lerp(19000, 18000, cum), 9000, deck);   // cut distance, left of the side split
-      cloudP[1] = lerp(13000, 3000, near);     // cut distance, right of it
-      cloudP[2] = lerp(5000, 2500, near);      // cut fade (m)
-      cloudP[3] = lerp(700, 160, cum);         // base undulation (m, peak to peak): cumulus share a flat condensation level
+      // (the cuts are the scene's composition, scene.atmos.cloud; the valley's in the comments)
+      cloudP[0] = lerp(lerp(CL.cutL[0], CL.cutL[1], cum), CL.cutL[2], deck);   // cut distance, left of the side split: 19000, 18000, 9000
+      cloudP[1] = lerp(CL.cutR[0], CL.cutR[1], near);     // cut distance, right of it: 13000, 3000
+      cloudP[2] = lerp(CL.fade[0], CL.fade[1], near);     // cut fade (m): 5000, 2500
+      cloudP[3] = lerp(CL.undul[0], CL.undul[1], cum);    // base undulation (m, peak to peak; 700, 160): cumulus share a flat condensation level
       // slab base (m): a dry grey deck is a high lid (~2900 m, the massif's summit just grazing it; a flat base across
       // the massif at 1500-2000 m read as a table mountain), a rain deck hangs low (~1150 m: the walls go into it)
       cloudQ[0] = lerp(lerp(1500, 1700, cum), lerp(2900, 1150, rk), deck);
       cloudQ[1] = lerp(3600, 4400, deck * (1 - rk));   // slab top (m)
       cloudQ[2] = deck;                        // the near grey deck (its ragged, soft base)
-      cloudQ[3] = lerp(0, -0.3, near);         // side split: sin(azimuth) where the left cut starts to give way
+      cloudQ[3] = lerp(CL.split[0], CL.split[1], near);   // side split: sin(azimuth) where the left cut starts to give way (0, -.3)
       F.uCloudP = cloudP; F.uCloudQ = cloudQ;
       // cloud shadows: Phase 1 0.65, crisp deep shadows under fair-weather cumulus
       F.uShadowAmp = lerp(0.65, 0.85, cum);
@@ -217,6 +222,7 @@
       });
       haveLast = true;
       F.uSkyResp = jump > 0.08 ? 1 : 0;      // a 60 s transition at 8x on a 10 fps device moves ~0.013 per frame
+      F.uCloudSoft = (CL.soft || 0) * cum;   // (stage 2b) the scene's cumulus clean-up (FS_SKY); the valley's profile: 0
 
       // ---- exposure: Phase 1 (full cover sits sunlit snow below the ACES shoulder) x a partial auto-exposure on
       // the light level (overcast / rain days on a green meadow are lifted ~1.3-1.55x so they read soft, not murky).

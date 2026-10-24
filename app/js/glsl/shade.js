@@ -1,11 +1,13 @@
 // =====================================================================================
 //  GLSL: the scene shading pass (frozen glue). It owns only the tree-sway remap of the G-buffer lookup, the cloud
 //  pass fetch and the order of the calls into the lane chunks:
-//    sky pixel:     skyPixel (ATMOS, lane C) -> applyVeil (VEIL, lane E)
-//    surface pixel: shadeSurface (SURFACE, lane D) -> applyAtmos (ATMOS, lane C) -> applyVeil (VEIL, lane E)
-//    ?view=:        surfaceDebug (SURFACE)
+//    sky pixel:     skyPixel (ATMOS; or the scene's sceneSky: SCENE_SKY) -> hazardLight (HAZARD) -> applyVeil (VEIL)
+//    surface pixel: shadeSurface (the scene's surface chunk: SURFACE / SURFACE_HOUSE) -> hazardSurface -> hazardLight
+//                   (HAZARD) -> applyAtmos (ATMOS) -> applyVeil (VEIL)
+//    ?view=:        surfaceDebug (the scene's surface chunk)
 //  Output: rgb = scene radiance, a = snow fraction x sun visibility (0 on the sky), read by the composite sparkle and
-//  the flake colour-over-snow. Program 'shade' = COMMON + ENV + ATMOS + GBUF + SURFACE + VEIL + FS_SHADE.
+//  the flake colour-over-snow. Program 'shade' (valley) = COMMON + ENV + ATMOS + GBUF + SURFACE + VEIL + HAZARD +
+//  FS_SHADE; 'shade@house' swaps SURFACE for SURFACE_HOUSE (which also brings its own treeH: SCENE_SWAY).
 // =====================================================================================
 (function (S) {
   'use strict';
@@ -17,7 +19,16 @@ out vec4 o;
 
 // tree sway: treetops lean/oscillate with the wind. The G-buffer is static, so we invert the
 // displacement field with a 2-step fixed-point lookup (starting mid-tree so silhouettes move too).
+// treeH(g0): the sway weight of a G-buffer pixel (0 = rigid). A scene whose surface chunk defines SCENE_SWAY brings its
+// own (its material ids differ: SURFACE_HOUSE); the valley's is material 2 (tree) with its height fraction
+#ifndef SCENE_SWAY
 float treeH(vec4 g) { return floor(g.y + 0.001) == 2.0 ? fract(g.y + 0.001) / 0.9 : 0.0; }
+#endif
+// a sky pixel's radiance: ATMOS's skyPixel, or the scene's own sky (stage 2b): a scene whose surface chunk defines
+// SCENE_SKY brings sceneSky(rd, cl) (the house: its golden-hour gradient over skyPixel)
+#ifndef SCENE_SKY
+vec3 sceneSky(vec3 rd, vec4 cl) { return skyPixel(rd, cl); }
+#endif
 vec2 swayOff(float h, float t, vec2 frag) {
   float w = uSway.x;
   float osc = sin(uSway.y + frag.x * 0.013 + frag.y * 0.007) * (0.25 + 0.05 * abs(w));
@@ -44,14 +55,32 @@ void main() {
   float cT = cOp > 0.003 ? texture(uSkyD, uv).x / cOp : 0.0;   // opacity-weighted mean cloud distance (0 = none)
   if (uView > 0) { o = vec4(t > 60000.0 ? vec3(0.04, 0.06, 0.1) : surfaceDebug(uView, uv, g0, rd, t), 0.0); return; }
   if (t > 60000.0) {
-    o = vec4(applyVeil(skyPixel(rd, cl), t, gl_FragCoord.xy), 0.0);
+    o = vec4(applyVeil(hazardLight(sceneSky(rd, cl), uv, g0, rd, t, cl), t, gl_FragCoord.xy), 0.0);
     return;
   }
   float snowMask;
   vec3 col = shadeSurface(uv, g0, rd, t, snowMask);
+  col = hazardSurface(col, uv, g0, rd, t);      // crack decals (HAZARD; neutral in stage 0)
+  col = hazardLight(col, uv, g0, rd, t, cl);    // lightning on the scene
   col = applyAtmos(col, t, rd, cl, cT);
   o = vec4(applyVeil(col, t, gl_FragCoord.xy), snowMask);
 }
 `;
-  S.glsl.progs.shade = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'SURFACE', 'VEIL', 'FS_SHADE'] };
+  // the valley's shade program (scenes/valley.js progs.shade); the house's is 'shade@house' (glsl/house/surface-house.js)
+  S.glsl.progs.shade = { vs: ['VS_FULL'], fs: ['COMMON', 'ENV', 'ATMOS', 'GBUF', 'SURFACE', 'VEIL', 'HAZARD', 'FS_SHADE'] };
+
+  // HAZARD_IDLE (polish): the five hazard hooks the glue calls (FS_SKY / FS_SKY_SOFT: hazardSky; FS_SHADE: hazardLight,
+  // hazardSurface; FS_COMP / FS_COMP_SCENE: hazardShake, hazardComp) as exactly what each returns while its hazard is
+  // off, with HAZARD's signatures. gl.js builds a hook-free twin of every program whose recipe includes HAZARD ('<recipe>~idle':
+  // HAZARD replaced by this chunk) and render.js draws the twin while no hazard is on: the same image (each hook is the
+  // identity then), the Phase-2 code (the inlined hooks changed the Metal codegen of the sky expression: 1 LSB on a
+  // pixel or two of some rain frames) and less of it (the valley ~2% faster in steady state). tests/check.mjs pins
+  // the signatures and the hooks' early-outs that render.js's predicate mirrors.
+  C.HAZARD_IDLE = `
+vec3 hazardSky(vec3 acc, float T, vec3 rd, float tHit) { return acc; }
+vec3 hazardLight(vec3 col, vec2 uv, vec4 g0, vec3 rd, float t, vec4 cl) { return col; }
+vec3 hazardSurface(vec3 col, vec2 uv, vec4 g0, vec3 rd, float t) { return col; }
+vec2 hazardShake(vec2 uv) { return uv; }
+vec3 hazardComp(sampler2D hdr, sampler2D bloom, float bloomStr, vec2 uv) { return texture(hdr, uv).rgb + texture(bloom, uv).rgb * bloomStr; }
+`;
 })(window.SNOW);

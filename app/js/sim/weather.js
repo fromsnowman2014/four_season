@@ -1,9 +1,18 @@
 // =====================================================================================
-//  sim/weather.js (stage-1 owner: lane A) — the weather state and its channels. Pure JS: no GL, no DOM.
-//  Seven states, each a target over the channels (PRESET below). Every change is a staged transition of D = 60
+//  sim/weather.js (stage-1 owner: lane A; Phase 3: lane Z) — the weather state and its channels. Pure JS: no GL, no DOM.
+//  Eight states (Phase 3 added 'thunder'), each a target over the channels (PRESET below). Every change is a staged transition of D = 60
 //  climate-s that starts from the CURRENT channel values (so a pick in mid-transition never jumps): clouds lead,
 //  precipitation lags in and leads out, the gale sits between, fog has its own window, the sky clears last.
 //  A season-dependent Markov scheduler picks the next state; a manual pick transitions and then holds.
+//  Thunderstorms (Phase 3) are a variant of the Phase-2 chain: the scheduler draws exactly the Phase-2 states; an event
+//  drawn as rain out of cumulus / overcast, or as overcast out of rain, becomes 'thunder' with a probability that peaks
+//  in summer and late spring (thunderOdds, its own counter S.rand(seed, eventIdx, 4)). The chain goes on from the
+//  drawn ('base') state, so every event's time and base state stay the Phase-2 ones: a seeded sequence differs from
+//  Phase 2 only where an event is shown (and felt: heavier rain, gusts, the deck, strikes) as a thunderstorm, and in
+//  what such a storm leaves behind: its heavier rain leaves the ground wetter, and its gusts and deck advance the wind
+//  integrals and the cloud drift (uCloudOff) differently, so later frames of that seed differ from Phase 2 for good
+//  (measured: seed 3 at t=2400, a season after 11 strikes, an autumn fog day with its fog banks elsewhere: mean 15.6,
+//  max 147 per channel). The chain of states and times stays the Phase-2 one.
 //
 //  S.weather = { s, init(cfg), step(dtc, ff), snapshot(), api }     (stepped after the climate, in climate seconds)
 //    s.t         the weather clock (S.climate.s.t)
@@ -19,6 +28,7 @@
 //                fog       valley fog                                      precip    precipitation rate
 //                gale      gale strength (the wind blends into the gale by smooth(gale))
 //                heavy     heavy-snowfall / blizzard intensity             tempOff   temperature offset (deg C)
+//                lightning strike rate 0..1 (Phase 3; sim/events.js: ~1 strike / 8 s at 1)
 //                snowFrac  snow share of the precipitation: follows 1 - smooth(1, 3, temp) (snow below 1 C, rain above
 //                          3 C) at most 1/SF_TIME per climate-s, so a fast temperature swing (a season pick, a pick
 //                          across the freezing line) turns snow into rain through ~15 s of sleet, never at once
@@ -38,46 +48,55 @@
   const DWELL = [70, 180];                       // climate-s between scheduled transition starts (uniform)
   const SF_TIME = 15;                            // climate-s: the fastest full snow <-> rain conversion
   const FIRST_COLD = 2.5;                        // deg C: the opening snowfall is at least this far below freezing
-  const STATES = ['clear', 'cumulus', 'overcast', 'fog', 'rain', 'snow', 'blizzard'];
-  const KEYS = ['cloudCov', 'cumulus', 'overcast', 'cirrus', 'fog', 'precip', 'gale', 'heavy', 'tempOff'];
+  // Phase 3: 'thunder' (뇌우) is the eighth state: a manual pick, or an automatic event turned into a storm by
+  // thunderOdds (its ROW / LINK / DWELL_BIAS columns stay 0: the chain itself is the Phase-2 one); 'lightning' is the
+  // strike rate channel (0 everywhere but thunder; sim/events.js turns it into strikes)
+  const STATES = ['clear', 'cumulus', 'overcast', 'fog', 'rain', 'snow', 'blizzard', 'thunder'];
+  const N = STATES.length;
+  const KEYS = ['cloudCov', 'cumulus', 'overcast', 'cirrus', 'fog', 'precip', 'gale', 'heavy', 'tempOff', 'lightning'];
   // canonical presets (the contract lanes C/D/E tune against via ?wx=); order = KEYS
   const PRESET = {
-    clear:    [0.15, 0,   0,    0.35, 0,    0,    0.05, 0,  1],
-    cumulus:  [0.55, 1,   0.1,  0.2,  0,    0,    0.2,  0,  0],
-    overcast: [0.95, 0.2, 0.75, 0,    0.1,  0,    0.3,  0, -1],
-    fog:      [0.75, 0,   0.5,  0,    1,    0,    0,    0, -1],
-    rain:     [0.97, 0,   0.85, 0,    0.2,  0.65, 0.4,  0,  1],
-    snow:     [0.75, 0.2, 0.35, 0.4,  0.05, 0.75, 0.15, 0, -3],    // Phase-1 sunlit snowfall: broken sun, not grey
-    blizzard: [0.98, 0,   1,    0,    0.2,  1,    1,    1, -6],
+    clear:    [0.15, 0,   0,    0.35, 0,    0,    0.05, 0,  1, 0],
+    cumulus:  [0.55, 1,   0.1,  0.2,  0,    0,    0.2,  0,  0, 0],
+    overcast: [0.95, 0.2, 0.75, 0,    0.1,  0,    0.3,  0, -1, 0],
+    fog:      [0.75, 0,   0.5,  0,    1,    0,    0,    0, -1, 0],
+    rain:     [0.97, 0,   0.85, 0,    0.2,  0.65, 0.4,  0,  1, 0],
+    snow:     [0.75, 0.2, 0.35, 0.4,  0.05, 0.75, 0.15, 0, -3, 0],    // Phase-1 sunlit snowfall: broken sun, not grey
+    blizzard: [0.98, 0,   1,    0,    0.2,  1,    1,    1, -6, 0],
+    // a thunderstorm: a low, dark deck (derive/events.js darkens and lowers it further by the lightning channel),
+    // heavier rain (precip .85 and heavy .35: the rain layers' heavy multipliers), gusts (gale .65), strikes. tempOff
+    // follows rain's (the same feasibility: T >= 1 C)
+    thunder:  [0.99, 0,   1,    0,    0.15, 0.85, 0.65, 0.35, 1, 1],
   };
-  const IS_PRECIP = { rain: 1, snow: 1, blizzard: 1 };
+  const IS_PRECIP = { rain: 1, snow: 1, blizzard: 1, thunder: 1 };
   // ---- the Markov scheduler: P(i -> j) ∝ ROW[season][j] · LINK[i][j] · feasible(j), rows blended by seasonW.
   // ROW: how much each season favours a state; LINK: the structural affinity of a move (0 = forbidden: no self
   // transitions, precipitation only out of overcast / cumulus / fog, blizzard only out of snow / overcast).
-  // Columns in STATES order: clear cumulus overcast fog rain snow blizzard
+  // Columns in STATES order: clear cumulus overcast fog rain snow blizzard thunder
   const ROW = [
-    [1.0, 1.1, 0.7, 0.5, 1.5, 0.35, 0.2],  // spring: mixed, showery, late snow early on
-    [1.5, 1.7, 0.4, 0.2, 0.75, 0,  0],     // summer: sunny and cumulus days, some showers
-    [0.8, 0.4, 1.0, 1.6, 1.1, 0.6, 0.2],   // autumn: fog and rain, first snow late
-    [0.55, 0.2, 1.0, 0.35, 0.3, 2.8, 1.1], // winter: snowy (sunny spells between the snowfalls)
+    [1.0, 1.1, 0.7, 0.5, 1.5, 0.35, 0.2, 0],  // spring: mixed, showery, late snow early on
+    [1.5, 1.7, 0.4, 0.2, 0.75, 0,  0, 0],     // summer: sunny and cumulus days, some showers
+    [0.8, 0.4, 1.0, 1.6, 1.1, 0.6, 0.2, 0],   // autumn: fog and rain, first snow late
+    [0.55, 0.2, 1.0, 0.35, 0.3, 2.8, 1.1, 0], // winter: snowy (sunny spells between the snowfalls)
   ];
   // dwell bias per season and state (-1 short .. +1 long): the dwell is 70 + 110 u^g with g = 2^(-1.5 bias), so the
   // mean is 125 s neutral, ~150 s at +1, ~100 s at -1 (always inside 70-180): winter snow lingers and the grey
   // gateways pass quickly, summer showers are brief
   const DWELL_BIAS = [
-    [0, 0, -0.3, -0.3, 0.2, 0.2, -0.3],      // spring
-    [0.5, 0.5, -0.5, -0.5, -0.5, 0, 0],      // summer
-    [0, -0.3, 0, 0.5, 0.3, 0.3, -0.3],       // autumn
-    [0, -0.6, -0.6, -0.6, 0, 1, 0],          // winter
+    [0, 0, -0.3, -0.3, 0.2, 0.2, -0.3, 0],      // spring
+    [0.5, 0.5, -0.5, -0.5, -0.5, 0, 0, 0],      // summer
+    [0, -0.3, 0, 0.5, 0.3, 0.3, -0.3, 0],       // autumn
+    [0, -0.6, -0.6, -0.6, 0, 1, 0, 0],          // winter
   ];
   const LINK = {
-    clear:    [0,   1.4, 1.0, 0.8, 0,   0,   0],
-    cumulus:  [1.2, 0,   1.0, 0.4, 1.4, 0.6, 0],
-    overcast: [0.7, 0.7, 0,   0.8, 2.0, 2.0, 1.0],
-    fog:      [1.5, 0.8, 1.0, 0,   0.6, 0.6, 0],
-    rain:     [0.8, 1.0, 1.5, 0.9, 0,   0,   0],
-    snow:     [1.0, 0.5, 1.4, 0.5, 0,   0,   1.6],
-    blizzard: [0.6, 0,   1.0, 0.2, 0,   2.0, 0],
+    clear:    [0,   1.4, 1.0, 0.8, 0,   0,   0,   0],
+    cumulus:  [1.2, 0,   1.0, 0.4, 1.4, 0.6, 0,   0],
+    overcast: [0.7, 0.7, 0,   0.8, 2.0, 2.0, 1.0, 0],
+    fog:      [1.5, 0.8, 1.0, 0,   0.6, 0.6, 0,   0],
+    rain:     [0.8, 1.0, 1.5, 0.9, 0,   0,   0,   0],
+    snow:     [1.0, 0.5, 1.4, 0.5, 0,   0,   1.6, 0],
+    blizzard: [0.6, 0,   1.0, 0.2, 0,   2.0, 0,   0],
+    thunder:  [0.8, 1.0, 1.5, 0.9, 0.6, 0,   0,   0],   // a storm passes into broken cloud, a grey deck or plain rain
   };
   // ---- transition windows in progress units (0..1 of D), by channel and direction (up = the target is higher)
   function windowOf(k, up, intoPrecip, outOfPrecip) {
@@ -86,19 +105,20 @@
       case 'cirrus': return up ? [0, 0.5] : [0.25, 0.85];
       case 'fog': return up ? [0.15, 0.8] : [0, 0.6];                                            // fog forms slowly, lifts early
       case 'precip': return up ? [0.4, 1] : [0, 0.55];                                           // lags in, leads out
-      case 'heavy': return up ? [0.5, 1] : [0, 0.45];
+      case 'heavy': case 'lightning': return up ? [0.5, 1] : [0, 0.45];
       case 'gale': return up ? [0.25, 0.8] : [0.15, 0.75];                                       // between clouds and precip
       default: return intoPrecip ? [0, 0.45] : outOfPrecip ? [0.5, 1] : [0.1, 0.9];             // tempOff: precip type set first
     }
   }
 
-  const ch = { cloudCov: 0.6, cumulus: 0, overcast: 0, cirrus: 1, fog: 0, precip: 1, gale: 0, heavy: 0, tempOff: 0, snowFrac: 1 };
+  const ch = { cloudCov: 0.6, cumulus: 0, overcast: 0, cirrus: 1, fog: 0, precip: 1, gale: 0, heavy: 0, tempOff: 0, lightning: 0, snowFrac: 1 };
   const s = { t: 0, cur: 'snow', next: null, progress: 1, manual: null, nextAt: 0, auto: true, amount: 0.5,
               ch, temp: 0, curtain: 0, white: 0, tail: 0, heading: 0,
               forced: null };   // the legacy forced storm level (?storm=1 / setStorm), null = none
   // the running transition: from-channel values, target state, start time, per-channel windows, heading ease
   // first: the opening snowfall (cold snap, see targetOf), cleared by the first transition
-  const tr = { from: {}, to: 'snow', t0: -1e9, win: {}, h0: 0, h1: 0, first: false };
+  // base: the Phase-2 state the scheduler drew (an automatic thunderstorm's base is rain or overcast; else = to)
+  const tr = { from: {}, to: 'snow', base: 'snow', t0: -1e9, win: {}, h0: 0, h1: 0, first: false };
   let wx = null, seed = 1, eventIdx = 0, sf2 = 1;     // sf2: snowFrac before any ?wx override (the rate-limited state)
   S.amountMul = () => 0.2 + 1.6 * s.amount;
 
@@ -115,46 +135,55 @@
     const tS = S.climate.s.tSeason;
     if (name === 'snow') return Math.min(v, -0.5 - tS);
     if (name === 'blizzard') return Math.min(v, -2 - tS);
-    if (name === 'rain') return Math.max(v, 3.5 - tS);
+    if (name === 'rain' || name === 'thunder') return Math.max(v, 3.5 - tS);
     return v;
   }
   // temperature feasibility of an automatic draw (a conflicting draw is redrawn = dropped from the row): rain that
   // would fall as snow (T < 1 C), snow that would fall as rain (T > 3 C), blizzard unless it is freezing (T < 0)
   function feasible(name) {
     const tS = S.climate.s.tSeason, T = tS + presetOf(name, 'tempOff');
-    if (name === 'rain') return T >= 1;
+    if (name === 'rain' || name === 'thunder') return T >= 1;
     if (name === 'snow') return T <= 3;
     if (name === 'blizzard') return s.temp < 0 && T < 1;
     return true;
   }
   // next state from `from` (null: the first weather, no link mask) with the uniform u
   function draw(from, u) {
-    const w = S.climate.s.seasonW, p = new Array(7);
+    const w = S.climate.s.seasonW, p = new Array(N);
     let sum = 0;
-    for (let j = 0; j < 7; j++) {
+    for (let j = 0; j < N; j++) {
       const row = w[0] * ROW[0][j] + w[1] * ROW[1][j] + w[2] * ROW[2][j] + w[3] * ROW[3][j];
       p[j] = row * (from ? LINK[from][j] : 1) * (feasible(STATES[j]) ? 1 : 0);
       sum += p[j];
     }
     if (sum <= 0) return from === 'clear' ? 'cumulus' : 'clear';     // never happens with the tables above
     let acc = 0;
-    for (let j = 0; j < 7; j++) { acc += p[j] / sum; if (u < acc) return STATES[j]; }
-    for (let j = 6; j >= 0; j--) if (p[j] > 0) return STATES[j];
+    for (let j = 0; j < N; j++) { acc += p[j] / sum; if (u < acc) return STATES[j]; }
+    for (let j = N - 1; j >= 0; j--) if (p[j] > 0) return STATES[j];
   }
   function dwell(i, k, name) {
     const w = S.climate.s.seasonW, j = STATES.indexOf(name);
     const bias = w[0] * DWELL_BIAS[0][j] + w[1] * DWELL_BIAS[1][j] + w[2] * DWELL_BIAS[2][j] + w[3] * DWELL_BIAS[3][j];
     return DWELL[0] + (DWELL[1] - DWELL[0]) * Math.pow(S.rand(seed, i, k), Math.pow(2, -1.5 * bias));
   }
-  // the state the weather is heading to (the scheduler's "current" state)
-  const target = () => tr.to;
+  // the state the weather is heading to (the scheduler's "current" state): the base state of an automatic thunderstorm
+  const target = () => tr.base || tr.to;
+  // thunderstorms: the chance that an event drawn as `name` out of `from` turns into one. Late spring through summer
+  // (phase ~.12-.46, peaking mid-summer); out of cumulus (afternoon storms) most, out of overcast less; a storm may also
+  // build out of rain (an event drawn as overcast). Never twice in a row, never where rain could not fall
+  function thunderOdds(from, name) {
+    if (tr.to === 'thunder' || !feasible('thunder')) return 0;
+    const ph = S.climate.s.phase, season = smooth(0.1, 0.2, ph) * (1 - smooth(0.4, 0.48, ph)) * (0.75 + 0.25 * smooth(0.18, 0.3, ph));
+    const k = name === 'rain' ? (from === 'cumulus' ? 0.8 : from === 'overcast' ? 0.55 : 0) : (name === 'overcast' && from === 'rain' ? 0.35 : 0);
+    return k * season;
+  }
 
   // start a transition to `name` from the current channel values (instant: settle at once, test / legacy hooks)
   function begin(name, instant) {
     tr.first = false;
     const intoP = !!IS_PRECIP[name], outP = !IS_PRECIP[name] && (IS_PRECIP[tr.to] || ch.precip > 0.01);
     s.cur = s.progress < 0.5 && s.next ? s.cur : tr.to;
-    tr.to = name; tr.t0 = instant ? s.t - D : s.t;
+    tr.to = name; tr.base = name; tr.t0 = instant ? s.t - D : s.t;
     for (const k of KEYS) {
       tr.from[k] = ch[k];
       tr.win[k] = windowOf(k, targetOf(name, k) > ch[k], intoP, outP);
@@ -170,7 +199,9 @@
   function schedule() {
     const from = target();
     const name = draw(from, S.rand(seed, eventIdx, 0));
-    begin(name, false);
+    const storm = S.rand(seed, eventIdx, 4) < thunderOdds(from, name);
+    begin(storm ? 'thunder' : name, false);
+    tr.base = name;                                  // the chain goes on from the drawn state (and its dwell)
     s.nextAt = s.t + dwell(eventIdx, 1, name);
     eventIdx++;
   }
@@ -178,8 +209,9 @@
   // held state's target may differ from its automatic one (tempOff of a manual precipitation pick), so it eases back
   // through a transition of its own; the next scheduled change comes a dwell later
   function resume(wasHeld) {
-    if (wasHeld) begin(tr.to, false);
-    s.nextAt = s.t + dwell(eventIdx, 3, tr.to);
+    const base = target();
+    if (wasHeld) { begin(tr.to, false); tr.base = base; }
+    s.nextAt = s.t + dwell(eventIdx, 3, base);
   }
 
   // storm whiteout: the plateau sits at ~86% and only gust peaks (a slow beat of two sines) push it to 100%
@@ -235,7 +267,8 @@
         // a season change (or pin) can leave an automatic precipitation state on the wrong side of the rain / snow
         // line: end it early instead of labelling rain as snow for the rest of its dwell
         // (not before the minimum dwell)
-        if (!s.next && IS_PRECIP[tr.to] && !feasible(tr.to) && !(tr.to === 'blizzard' && s.temp < 0)) s.nextAt = Math.min(s.nextAt, Math.max(s.t, tr.t0 + DWELL[0]));
+        const b = target();
+        if (!s.next && IS_PRECIP[b] && !feasible(b) && !(b === 'blizzard' && s.temp < 0)) s.nextAt = Math.min(s.nextAt, Math.max(s.t, tr.t0 + DWELL[0]));
         if (s.t >= s.nextAt) schedule();
       }
       evalChannels(dtc, false);
@@ -246,7 +279,7 @@
     snapshot: () => ({ weather: { cur: s.cur, next: s.next, progress: +s.progress.toFixed(3), manual: s.manual, nextAt: +s.nextAt.toFixed(2) },
       temp: +s.temp.toFixed(2), snowFrac: +ch.snowFrac.toFixed(4), precip: +ch.precip.toFixed(4), white: +s.white.toFixed(4) }),
     api: {
-      // pick a weather state (clear, cumulus, overcast, fog, rain, snow, blizzard): a 60 climate-s transition, then
+      // pick a weather state (clear, cumulus, overcast, fog, rain, snow, blizzard, thunder): a 60 climate-s transition, then
       // it holds; 'auto' (or null) resumes the scheduler from the current weather. opt.instant settles at once (test
       // and legacy hooks only). Returns the weather snapshot
       setWeather(name, opt) {
@@ -269,7 +302,7 @@
       // legacy (Phase 1): force the storm level 0..1 at once (snow .. blizzard), null = back to automatic weather
       setStorm(v) {
         if (v === null || v === undefined) { if (s.forced !== null) { s.forced = null; s.manual = null; resume(true); } }
-        else { s.forced = clamp(+v, 0, 1); s.manual = null; s.nextAt = 0; s.cur = s.forced > 0.5 ? 'blizzard' : 'snow'; s.next = null; tr.to = s.cur; tr.t0 = s.t - D; }
+        else { s.forced = clamp(+v, 0, 1); s.manual = null; s.nextAt = 0; s.cur = s.forced > 0.5 ? 'blizzard' : 'snow'; s.next = null; tr.to = tr.base = s.cur; tr.t0 = s.t - D; }
         evalChannels(0, v !== null && v !== undefined);
       },
       // legacy (Phase 1, the 폭설 button): a blizzard now (60 s transition) that ends after dur like a Phase-1 front:

@@ -3,7 +3,8 @@
 //  natural: closed form in the animation clock and the seed. A breeze whose direction veers slowly about the
 //  prevailing line (seeded 1D value noise S.vn1, ~+-50 deg over minutes) and whose speed follows the season and
 //  the Phase-1 gust beat, blended into the gale by smooth(ch.gale) along the event's gale line (the Phase-1 line,
-//  rotated by the weather heading and partly by the veer).
+//  rotated by the weather heading and partly by the veer; in the world's reference frame S.worldR / worldF, the valley's
+//  camera, whichever scene is shown).
 //  steer: ONLY while the left button is held (S.mouse.drag), the drag velocity becomes a horizontal wind: screen
 //  right -> camR, screen up -> away from the camera (camF on the ground), 10 m/s per viewport per second, capped
 //  at 14 m/s, fast attack (0.12 s; easing 1.5 s when the drag slows). After release it decays with a 15 s
@@ -23,7 +24,7 @@
 // =====================================================================================
 (function (S) {
   'use strict';
-  const { lerp, smooth, camR, camF } = S;
+  const { lerp, smooth, camR, camF, worldR, worldF } = S;
   const STEER_K = 10, STEER_MAX = 14, STEER_HALF = 15;   // m/s per (viewport / s); cap m/s; release half-life s
   const SEASON_SPEED = [1.35, 0.85, 1.15, 1.0];          // breeze speed factor: spring, summer, autumn, winter
   // the ground-projected camF, refreshed per step: the camera is re-framed per aspect ratio (S.frameCamera mutates
@@ -45,11 +46,13 @@
       * (1 + 0.45 * g1) * (1 + 0.3 * S.vn1(seed * 31 + 9, t / 40));
     const cx = Math.cos(ang) * sp, cz = Math.sin(ang) * sp;
     // gale: slow swell (g2) times a phase-modulated gust train (1.3 / 2.9 / 6.1 rad/s beat), along the Phase-1 gale
-    // line (mostly screen-right, a little away from the camera) turned by the event heading and 40% of the veer
+    // line (mostly screen-right, a little away from the camera) turned by the event heading and 40% of the veer. The
+    // line is the world's (S.worldR / worldF, core.js: the valley's camera for this aspect), not the live camera's, so
+    // the wind never depends on the scene shown (polish; in the valley the same numbers as Phase 2)
     const g2 = Math.sin(t * 0.53 + 2.0) * 0.45 + Math.sin(t * 1.37 + 0.7) * 0.35 + Math.sin(t * 3.1) * 0.2;
     const gustTrain = 1 + 0.22 * Math.sin(t * 1.3 + 0.9) + 0.14 * Math.sin(t * 2.9 + 1.8) + 0.08 * Math.sin(t * 6.1);
     const mag = (10.5 + 3.0 * g2) * gustTrain;
-    const gx = camR[0] * 0.88 + camF[0] * 0.3, gz = camR[2] * 0.88 + camF[2] * 0.3;
+    const gx = worldR[0] * 0.88 + worldF[0] * 0.3, gz = worldR[2] * 0.88 + worldF[2] * 0.3;
     const h = wx.heading + 0.4 * veer, c = Math.cos(h), sn = Math.sin(h);
     let sx = gx * c - gz * sn, sz = gx * sn + gz * c;
     const l = Math.hypot(sx, sz); sx /= l; sz /= l;
